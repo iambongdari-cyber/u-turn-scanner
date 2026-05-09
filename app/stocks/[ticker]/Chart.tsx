@@ -74,7 +74,7 @@ export default function Chart({
     ma20Series.setData(ma20 as any);
 
     const ma60Series = chart.addLineSeries({
-      color: '#8b5cf6', lineWidth: 1.5,
+      color: '#8b5cf6', lineWidth: 2,
       priceLineVisible: false, lastValueVisible: false,
     });
     ma60Series.setData(ma60 as any);
