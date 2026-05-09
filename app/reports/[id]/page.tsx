@@ -15,10 +15,12 @@ export const dynamic = 'force-dynamic';
 
 interface PageProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ requested?: string }>;
 }
 
-export default async function ReportPage({ params }: PageProps) {
+export default async function ReportPage({ params, searchParams }: PageProps) {
   const { id } = await params;
+  const { requested } = await searchParams;
 
   const { data: report, error: reportErr } = await supabase
     .from('reports')
@@ -61,6 +63,11 @@ export default async function ReportPage({ params }: PageProps) {
           기준일 {report.base_date}
           {report.is_final ? '' : ' (1차)'}
         </p>
+         {requested && requested !== report.base_date && (
+           <p className="mt-2 rounded bg-amber-50 px-3 py-2 text-sm text-amber-800">
+             선택한 날짜({requested})의 리포트가 없어 가장 가까운 이전 리포트({report.base_date})를 표시합니다.
+           </p>
+         )}
       </div>
 
       {rows.length === 0 ? (

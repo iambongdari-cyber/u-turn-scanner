@@ -1,42 +1,45 @@
-import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import SearchForm from './_components/SearchForm';
 
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
-  const { data, error } = await supabase
+  // 가장 최근 일일 리포트 1건
+  const { data: latestDaily } = await supabase
     .from('reports')
-    .select('id')
+    .select('id, base_date')
     .eq('report_type', 'daily')
     .order('base_date', { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  if (error) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="text-center">
-          <h1 className="text-xl font-bold text-slate-800 mb-2">U턴 스캐너</h1>
-          <p className="text-red-600">DB 조회 오류: {error.message}</p>
-        </div>
-      </main>
-    );
-  }
+  return (
+    <main className="container mx-auto max-w-3xl p-8">
+      <header className="mb-6">
+        <h1 className="text-3xl font-bold text-slate-800">U턴 스캐너</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          국내주식 U턴 종목 자동 스캐너 · 분석 보조 도구
+        </p>
+      </header>
 
-  if (!data) {
-    return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-50">
-        <div className="text-center max-w-md">
-          <h1 className="text-2xl font-bold text-slate-800 mb-2">U턴 스캐너</h1>
-          <p className="text-slate-600">
-            아직 생성된 리포트가 없습니다.<br />
-            <code className="text-sm bg-slate-100 px-1 rounded">scripts/run_scan.py</code>
-            를 먼저 실행해주세요.
-          </p>
-        </div>
-      </main>
-    );
-  }
+      <SearchForm defaultDate={latestDaily?.base_date} />
 
-  redirect(`/reports/${data.id}`);
+      <div className="mt-6 flex flex-wrap items-center gap-4 text-sm">
+        {latestDaily ? (
+          <Link
+            href={`/reports/${latestDaily.id}`}
+            className="text-blue-600 hover:underline"
+          >
+            ▶ 가장 최근 일일 리포트 ({latestDaily.base_date}) 바로 보기
+          </Link>
+        ) : (
+          <span className="text-slate-500">아직 일일 리포트가 없습니다.</span>
+        )}
+        <Link href="/history" className="text-blue-600 hover:underline">
+          📅 과거 리포트 전체 보기
+        </Link>
+      </div>
+    </main>
+  );
 }
