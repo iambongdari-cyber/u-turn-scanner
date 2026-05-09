@@ -34,7 +34,8 @@ export default async function ReportPage({ params }: PageProps) {
     .from('scan_results')
     .select(
       `rank, ticker, score, close, golden_days_ago, final_grade,
-       stocks ( name, market )`,
+      stop_loss, upside_pct, rr_ratio,
+      stocks ( name, market )`,
     )
     .eq('report_id', id)
     .order('rank', { ascending: true })
@@ -80,6 +81,9 @@ export default async function ReportPage({ params }: PageProps) {
               <TableHead className="text-right">종가</TableHead>
               <TableHead className="text-right">점수</TableHead>
               <TableHead className="text-right">GC경과</TableHead>
+              <TableHead className="text-right">손절가</TableHead>
+              <TableHead className="text-right">상승여력</TableHead>
+              <TableHead className="text-right">손익비</TableHead>
               <TableHead>판정</TableHead>
               <TableHead className="w-24"></TableHead>
             </TableRow>
@@ -106,6 +110,15 @@ export default async function ReportPage({ params }: PageProps) {
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {r.golden_days_ago != null ? `${r.golden_days_ago}일전` : '-'}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {r.stop_loss != null ? Number(r.stop_loss).toLocaleString() : '-'}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {r.upside_pct != null ? `${Number(r.upside_pct).toFixed(1)}%` : '-'}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {r.rr_ratio != null ? Number(r.rr_ratio).toFixed(2) : '-'}
                 </TableCell>
                 <TableCell>
                   <GradeBadge grade={r.final_grade} />

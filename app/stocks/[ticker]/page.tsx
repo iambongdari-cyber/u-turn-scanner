@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import Chart from './Chart';
+import MemoForm from './MemoForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,6 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
   const { ticker } = await params;
   const { reportId } = await searchParams;
 
-  // 1) 종목 정보
   const { data: stock } = await supabase
     .from('stocks')
     .select('ticker, name, market')
@@ -26,7 +26,6 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
 
   if (!stock) notFound();
 
-  // 2) 최근 6개월 일봉
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
   const fromDate = sixMonthsAgo.toISOString().split('T')[0];
@@ -38,7 +37,6 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
     .gte('date', fromDate)
     .order('date', { ascending: true });
 
-  // 3) 스캔 결과 (조건 O/X와 계산값)
   let scan: any = null;
   if (reportId) {
     const { data } = await supabase
@@ -50,7 +48,17 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
     scan = data;
   }
 
-  // 4) 차트 데이터 가공
+  let note: any = null;
+  if (reportId) {
+    const { data } = await supabase
+      .from('stock_notes')
+      .select('interest_level, my_decision, target_buy, target_stop, target_sell, free_memo')
+      .eq('report_id', reportId)
+      .eq('ticker', ticker)
+      .maybeSingle();
+    note = data;
+  }
+
   const candles: Candle[] = (prices ?? []).map((p) => ({
     time: p.date,
     open: Number(p.open),
@@ -79,7 +87,6 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
   const ma20 = toLine(ma20arr);
   const ma60 = toLine(ma60arr);
 
-  // 5) 골든크로스 검출 → 마커
   const goldenMarkers: Array<{
     time: string; position: 'belowBar'; color: string;
     shape: 'arrowUp'; text: string;
@@ -101,7 +108,6 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
 
   return (
     <main className="container mx-auto max-w-7xl p-6">
-      {/* 헤더 */}
       <div className="mb-4 flex items-baseline gap-3">
         <h1 className="text-2xl font-bold text-slate-800">{stock.name}</h1>
         <span className="text-slate-400">{stock.ticker}</span>
@@ -110,26 +116,26 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
         </span>
       </div>
 
-      {/* 차트 + 사이드바 */}
-      <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-        {candles.length === 0 ? (
-          <div className="rounded border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
-            이 종목의 최근 일봉 데이터가 없습니다.
-          </div>
-        ) : (
-          <Chart
-            candles={candles}
-            ma10={ma10}
-            ma20={ma20}
-            ma60={ma60}
-            volumes={volumes}
-            goldenMarkers={goldenMarkers}
-          />
-        )}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: '24px' }}>
+       <div style={{ minWidth: 0 }}>
+          {candles.length === 0 ? (
+            <div className="rounded border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+              이 종목의 최근 일봉 데이터가 없습니다.
+            </div>
+          ) : (
+            <Chart
+              candles={candles}
+              ma10={ma10}
+              ma20={ma20}
+              ma60={ma60}
+              volumes={volumes}
+              goldenMarkers={goldenMarkers}
+            />
+          )}
+        </div>
 
-        {/* 우측 패널 */}
         <aside className="space-y-6">
-          <div className="rounded border border-slate-200 p-4">
+          <div className="rounded-md border border-slate-300 bg-white p-4 shadow-sm">            
             <h2 className="mb-3 text-sm font-semibold text-slate-700">
               조건 충족 여부
             </h2>
@@ -149,7 +155,7 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
           </div>
 
           {scan && (
-            <div className="rounded border border-slate-200 p-4">
+            <div className="rounded-md border border-slate-300 bg-white p-4 shadow-sm">
               <h2 className="mb-3 text-sm font-semibold text-slate-700">계산값</h2>
               <dl className="grid grid-cols-2 gap-y-1 text-sm">
                 <dt className="text-slate-500">점수</dt>
@@ -188,6 +194,10 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
               )}
             </div>
           )}
+
+          {reportId && (
+            <MemoForm reportId={reportId} ticker={ticker} initial={note} />
+          )}
         </aside>
       </div>
     </main>
@@ -205,7 +215,6 @@ function ConditionRow({ label, pass }: { label: string; pass: boolean | null }) 
   );
 }
 
-// 단순 이동평균 계산 (서버에서)
 function computeMA(closes: number[], period: number): (number | null)[] {
   const out: (number | null)[] = [];
   for (let i = 0; i < closes.length; i++) {

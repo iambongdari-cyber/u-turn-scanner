@@ -1,11 +1,9 @@
 import { redirect } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
-// 매번 최신 데이터를 받기 위해 캐싱 비활성
 export const dynamic = 'force-dynamic';
 
 export default async function Home() {
-  // 가장 최근 daily 리포트 1개의 id를 찾는다
   const { data, error } = await supabase
     .from('reports')
     .select('id')
