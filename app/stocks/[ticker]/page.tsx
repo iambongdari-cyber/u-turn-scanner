@@ -116,8 +116,8 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
         </span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: '24px' }}>
-       <div style={{ minWidth: 0 }}>
+      <div className="flex flex-col gap-6 md:flex-row">
+        <div className="min-w-0 md:flex-1">
           {candles.length === 0 ? (
             <div className="rounded border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
               이 종목의 최근 일봉 데이터가 없습니다.
@@ -134,7 +134,7 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
           )}
         </div>
 
-        <aside className="space-y-6">
+        <aside className="space-y-6 md:w-80 md:flex-shrink-0">
           <div className="rounded-md border border-slate-300 bg-white p-4 shadow-sm">            
             <h2 className="mb-3 text-sm font-semibold text-slate-700">
               조건 충족 여부
