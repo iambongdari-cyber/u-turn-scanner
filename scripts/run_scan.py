@@ -47,28 +47,14 @@ TOP_N                    = 10
 
 # ── DB 헬퍼 ─────────────────────────────────────────────────────
 def fetch_stocks() -> pd.DataFrame:
-    r = requests.get(
-        f"{REST_URL}/stocks",
-        headers=HEADERS,
-        params={"select": "ticker,name,market,market_cap", "order": "ticker.asc"},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return pd.DataFrame(r.json())
-
-
-def fetch_prices(ticker: str) -> pd.DataFrame:
+    """stocks 전체 조회. Supabase는 한 번에 최대 1000행이라 페이지네이션 필수."""
     rows: list[dict] = []
     offset, PAGE = 0, 1000
     while True:
         r = requests.get(
-            f"{REST_URL}/daily_prices",
+            f"{REST_URL}/stocks",
             headers={**HEADERS, "Range": f"{offset}-{offset + PAGE - 1}"},
-            params={
-                "select": "date,open,high,low,close,volume,trade_value",
-                "ticker": f"eq.{ticker}",
-                "order": "date.asc",
-            },
+            params={"select": "ticker,name,market,market_cap", "order": "ticker.asc"},
             timeout=30,
         )
         r.raise_for_status()
@@ -79,14 +65,49 @@ def fetch_prices(ticker: str) -> pd.DataFrame:
         if len(page) < PAGE:
             break
         offset += PAGE
+    return pd.DataFrame(rows)
+
+
+def fetch_all_prices() -> dict[str, pd.DataFrame]:
+    """daily_prices 전체를 한 번에 가져와 ticker별 DataFrame dict로 반환.
+    종목별로 따로 HTTP 호출하는 것보다 훨씬 빠르다 (수천 번 → 수백 번)."""
+    print("일봉 데이터 일괄 로드…")
+    rows: list[dict] = []
+    offset, PAGE = 0, 1000
+    while True:
+        r = requests.get(
+            f"{REST_URL}/daily_prices",
+            headers={**HEADERS, "Range": f"{offset}-{offset + PAGE - 1}"},
+            params={
+                "select": "ticker,date,open,high,low,close,volume,trade_value",
+                "order": "ticker.asc,date.asc",
+            },
+            timeout=120,
+        )
+        r.raise_for_status()
+        page = r.json()
+        if not page:
+            break
+        rows.extend(page)
+        if len(page) < PAGE:
+            break
+        offset += PAGE
+        if offset % 50000 == 0:
+            print(f"  …{offset}행")
+    print(f"  ✓ {len(rows)}행 로드 완료")
+
     if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date").reset_index(drop=True)
-    for c in ["open","high","low","close","volume","trade_value"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df
+        return {}
+
+    big = pd.DataFrame(rows)
+    big["date"] = pd.to_datetime(big["date"])
+    for c in ["open", "high", "low", "close", "volume", "trade_value"]:
+        big[c] = pd.to_numeric(big[c], errors="coerce")
+
+    result: dict[str, pd.DataFrame] = {}
+    for ticker, g in big.groupby("ticker"):
+        result[ticker] = g.sort_values("date").reset_index(drop=True)
+    return result
 
 
 def upsert_report(report_type: str, base_date: date, is_final: bool = True) -> str:
@@ -271,6 +292,13 @@ def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True) -> dic
 
     score = round(score, 2)
 
+    # ── MVP 점수 보정 ──
+    # 업종 상대강도(5) + 시장 대비 상대강도(5) = 10점은 아직 데이터 미연결이라
+    # 항상 0점. 실제 적용 가능한 배점은 90점. 이를 100점 만점으로 환산해
+    # 기획서의 90/80/70 판정 기준이 정상 작동하도록 한다.
+    # → 17~18단계에서 두 지표를 연결하면 이 보정을 제거한다.
+    score = round(score / 90.0 * 100, 2)
+
     # ── 필수 통과 + 최종 판정 ──
     must_pass = cond_golden and cond_above_ma60 and cond_ma60_rising
     if not must_pass:
@@ -327,13 +355,16 @@ def main() -> None:
     stocks = fetch_stocks()
     print(f"  ✓ {len(stocks)}개 종목\n")
 
+    prices_map = fetch_all_prices()
+    print()
+
     print("종목별 분석…")
     analyzed = []
     base_date = None
     for _, srow in stocks.iterrows():
         ticker, name, market_cap = srow["ticker"], srow["name"], srow["market_cap"]
-        df = fetch_prices(ticker)
-        if df.empty:
+        df = prices_map.get(ticker)
+        if df is None or df.empty:
             continue
         r = analyze(df, market_cap, market_above_ma60=True)
         if r is None:
@@ -348,12 +379,16 @@ def main() -> None:
         print("분석 가능한 종목이 없습니다.")
         return
 
-    # ── 통과 = 필수 + 추가 모두 통과 + final_grade != EXCLUDE
+    # ── 통과 후보 ──
+    # 필수 5조건 + (거래대금·시가총액·U턴) 통과 + EXCLUDE 아님.
+    # 이격도 20% 초과(CHASE_RISK)는 제외하지 않고 "추격 주의"로 표시하며 포함한다.
+    # (기획서 12장: 이격도 초과는 제외가 아니라 추격 주의 경고)
     candidates = [
         r for r in analyzed
         if r["cond_golden"] and r["cond_above_ma60"] and r["cond_ma60_rising"]
         and r["cond_lagging_ok"] and r["cond_cloud_red"]
-        and r["_extra_pass"] and r["final_grade"] != "EXCLUDE"
+        and r["cond_value_ok"] and r["cond_cap_ok"] and r["cond_uturn_ok"]
+        and r["final_grade"] != "EXCLUDE"
     ]
     candidates.sort(key=lambda x: x["score"], reverse=True)
     top = candidates[:TOP_N]
