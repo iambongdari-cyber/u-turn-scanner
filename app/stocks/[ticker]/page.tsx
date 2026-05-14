@@ -168,7 +168,7 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
                 </dd>
                 <dt className="text-slate-500">손절가</dt>
                 <dd className="text-right tabular-nums">
-                  {scan.stop_loss != null ? Number(scan.stop_loss).toLocaleString() : '-'}
+                  {scan.stop_loss != null ? Math.round(Number(scan.stop_loss)).toLocaleString() : '-'}
                 </dd>
                 <dt className="text-slate-500">상승여력</dt>
                 <dd className="text-right tabular-nums">
@@ -180,11 +180,11 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
                 </dd>
                 <dt className="text-slate-500">1차 매수후보가</dt>
                 <dd className="text-right tabular-nums">
-                  {scan.buy1_price != null ? Number(scan.buy1_price).toLocaleString() : '-'}
+                  {scan.buy1_price != null ? Math.round(Number(scan.buy1_price)).toLocaleString() : '-'}
                 </dd>
                 <dt className="text-slate-500">2차 매수후보가</dt>
                 <dd className="text-right tabular-nums">
-                  {scan.buy2_price != null ? Number(scan.buy2_price).toLocaleString() : '-'}
+                  {scan.buy2_price != null ? Math.round(Number(scan.buy2_price)).toLocaleString() : '-'}
                 </dd>
               </dl>
               {scan.one_line && (

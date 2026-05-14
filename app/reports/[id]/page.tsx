@@ -119,7 +119,7 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
                   {r.golden_days_ago != null ? `${r.golden_days_ago}일전` : '-'}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {r.stop_loss != null ? Number(r.stop_loss).toLocaleString() : '-'}
+                  {r.stop_loss != null ? Math.round(Number(r.stop_loss)).toLocaleString() : '-'}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {r.upside_pct != null ? `${Number(r.upside_pct).toFixed(1)}%` : '-'}
