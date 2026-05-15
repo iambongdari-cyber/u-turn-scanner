@@ -59,6 +59,15 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
     note = data;
   }
 
+  // 재무 정보 (가장 최근 사업연도 한 행)
+  const { data: finRows } = await supabase
+    .from('financials')
+    .select('fiscal_year, operating_income, net_income, revenue, fin_status')
+    .eq('ticker', ticker)
+    .order('fiscal_year', { ascending: false })
+    .limit(1);
+  const fin = finRows && finRows.length > 0 ? finRows[0] : null;
+
   const candles: Candle[] = (prices ?? []).map((p) => ({
     time: p.date,
     open: Number(p.open),
@@ -161,7 +170,7 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
                 <dt className="text-slate-500">점수</dt>
                 <dd className="text-right tabular-nums">{Number(scan.score).toFixed(1)}</dd>
                 <dt className="text-slate-500">판정</dt>
-                <dd className="text-right">{scan.final_grade}</dd>
+                <dd className="text-right">{translateGrade(scan.final_grade)}</dd>
                 <dt className="text-slate-500">이격도</dt>
                 <dd className="text-right tabular-nums">
                   {scan.disparity_pct != null ? `${Number(scan.disparity_pct).toFixed(2)}%` : '-'}
@@ -192,6 +201,34 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
                   {scan.one_line}
                 </p>
               )}
+            </div>
+          )}
+
+          {fin && (
+            <div className="rounded-md border border-slate-300 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-baseline justify-between">
+                <h2 className="text-sm font-semibold text-slate-700">재무</h2>
+                <FinBadge status={fin.fin_status} />
+              </div>
+              <dl className="grid grid-cols-2 gap-y-1 text-sm">
+                <dt className="text-slate-500">기준연도</dt>
+                <dd className="text-right tabular-nums">{fin.fiscal_year}</dd>
+                <dt className="text-slate-500">매출액</dt>
+                <dd className="text-right tabular-nums">
+                  {fin.revenue != null ? formatMoney(fin.revenue) : '-'}
+                </dd>
+                <dt className="text-slate-500">영업이익</dt>
+                <dd className="text-right tabular-nums">
+                  {fin.operating_income != null ? formatMoney(fin.operating_income) : '-'}
+                </dd>
+                <dt className="text-slate-500">당기순이익</dt>
+                <dd className="text-right tabular-nums">
+                  {fin.net_income != null ? formatMoney(fin.net_income) : '-'}
+                </dd>
+              </dl>
+              <p className="mt-3 text-xs text-slate-500">
+                DART 최근 사업보고서 기준. 재무는 점수에 반영되지 않으며 위험도 표시 용도입니다.
+              </p>
             </div>
           )}
 
@@ -227,4 +264,48 @@ function computeMA(closes: number[], period: number): (number | null)[] {
     }
   }
   return out;
+}
+
+function FinBadge({ status }: { status: string | null }) {
+  const labelMap: Record<string, string> = {
+    OK: '정상',
+    WARN: '주의',
+    HIGH_RISK: '고위험',
+    NO_DATA: '데이터없음',
+  };
+  const colorMap: Record<string, string> = {
+    OK: 'bg-green-100 text-green-800',
+    WARN: 'bg-yellow-100 text-yellow-800',
+    HIGH_RISK: 'bg-red-100 text-red-800',
+    NO_DATA: 'bg-slate-100 text-slate-500',
+  };
+  const label = status ? (labelMap[status] ?? status) : '-';
+  const cls = status ? (colorMap[status] ?? 'bg-slate-100') : 'bg-slate-100 text-slate-500';
+  return (
+    <span className={`inline-flex rounded px-2 py-0.5 text-xs ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+function formatMoney(v: number | null | undefined): string {
+  if (v == null) return '-';
+  const n = Number(v);
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `${sign}${(abs / 1e12).toFixed(1)}조`;
+  if (abs >= 1e8)  return `${sign}${(abs / 1e8).toFixed(0)}억`;
+  if (abs >= 1e4)  return `${sign}${(abs / 1e4).toFixed(0)}만`;
+  return n.toLocaleString();
+}
+
+function translateGrade(grade: string | null): string {
+  const map: Record<string, string> = {
+    A: 'A급',
+    B: 'B급',
+    WATCH: '관망',
+    CHASE_RISK: '추격주의',
+    EXCLUDE: '제외',
+  };
+  return grade ? (map[grade] ?? grade) : '-';
 }

@@ -53,6 +53,20 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
 
   const rows = results ?? [];
 
+  // financials를 별도 SELECT — 종목별 가장 최근 fiscal_year 한 행만 사용
+  const tickers = rows.map((r: any) => r.ticker);
+  const finMap = new Map<string, any>();
+  if (tickers.length > 0) {
+    const { data: fins } = await supabase
+      .from('financials')
+      .select('ticker, fiscal_year, fin_status')
+      .in('ticker', tickers)
+      .order('fiscal_year', { ascending: false });
+    for (const f of fins ?? []) {
+      if (!finMap.has(f.ticker)) finMap.set(f.ticker, f);
+    }
+  }
+
   return (
     <main className="container mx-auto max-w-5xl p-8">
       <div className="mb-6">
@@ -92,6 +106,7 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
               <TableHead className="text-right">상승여력</TableHead>
               <TableHead className="text-right">손익비</TableHead>
               <TableHead>판정</TableHead>
+              <TableHead>재무</TableHead>
               <TableHead className="w-24"></TableHead>
             </TableRow>
           </TableHeader>
@@ -131,6 +146,9 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
                   <GradeBadge grade={r.final_grade} />
                 </TableCell>
                 <TableCell>
+                  <FinBadge status={finMap.get(r.ticker)?.fin_status ?? null} />
+                </TableCell>
+                <TableCell>
                   <Button asChild variant="outline" size="sm">
                     <Link href={`/stocks/${r.ticker}?reportId=${id}`}>
                       차트보기
@@ -147,6 +165,13 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
 }
 
 function GradeBadge({ grade }: { grade: string | null }) {
+  const labelMap: Record<string, string> = {
+    A: 'A급',
+    B: 'B급',
+    WATCH: '관망',
+    CHASE_RISK: '추격주의',
+    EXCLUDE: '제외',
+  };
   const colorMap: Record<string, string> = {
     A: 'bg-green-100 text-green-800',
     B: 'bg-blue-100 text-blue-800',
@@ -154,10 +179,33 @@ function GradeBadge({ grade }: { grade: string | null }) {
     CHASE_RISK: 'bg-orange-100 text-orange-800',
     EXCLUDE: 'bg-slate-100 text-slate-600',
   };
+  const label = grade ? (labelMap[grade] ?? grade) : '-';
   const cls = grade ? (colorMap[grade] ?? 'bg-slate-100') : 'bg-slate-100';
   return (
     <span className={`inline-flex rounded px-2 py-0.5 text-xs ${cls}`}>
-      {grade ?? '-'}
+      {label}
+    </span>
+  );
+}
+
+function FinBadge({ status }: { status: string | null }) {
+  const labelMap: Record<string, string> = {
+    OK: '정상',
+    WARN: '주의',
+    HIGH_RISK: '고위험',
+    NO_DATA: '데이터없음',
+  };
+  const colorMap: Record<string, string> = {
+    OK: 'bg-green-100 text-green-800',
+    WARN: 'bg-yellow-100 text-yellow-800',
+    HIGH_RISK: 'bg-red-100 text-red-800',
+    NO_DATA: 'bg-slate-100 text-slate-500',
+  };
+  const label = status ? (labelMap[status] ?? status) : '-';
+  const cls = status ? (colorMap[status] ?? 'bg-slate-100') : 'bg-slate-100 text-slate-500';
+  return (
+    <span className={`inline-flex rounded px-2 py-0.5 text-xs ${cls}`}>
+      {label}
     </span>
   );
 }
