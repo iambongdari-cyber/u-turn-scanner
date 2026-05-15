@@ -11,6 +11,7 @@ run_scan.py
 
 KRX 정규장 종가 기준. 시장지수/업종은 MVP에선 미적용(17~18단계).
 """
+import argparse
 import os
 import sys
 from datetime import date
@@ -170,7 +171,8 @@ def ichimoku(df: pd.DataFrame) -> dict:
 
 
 # ── 종목 분석 ────────────────────────────────────────────────────
-def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True) -> dict | None:
+def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True,
+            golden_window: int = GOLDEN_WINDOW) -> dict | None:
     n = len(df)
     if n < 60:
         return None
@@ -192,7 +194,7 @@ def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True) -> dic
     cond_golden = False
     golden_date = None
     golden_days_ago = None
-    for i in range(max(1, t - GOLDEN_WINDOW + 1), t + 1):
+    for i in range(max(1, t - golden_window + 1), t + 1):
         if (pd.notna(ma10.iat[i-1]) and pd.notna(ma60.iat[i-1])
             and ma10.iat[i-1] <= ma60.iat[i-1]
             and pd.notna(ma10.iat[i]) and pd.notna(ma60.iat[i])
@@ -260,7 +262,7 @@ def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True) -> dic
     score = 0.0
     # 골든크로스 최근일수록 (15)
     if cond_golden and golden_days_ago is not None:
-        score += 15 * (1 - golden_days_ago / GOLDEN_WINDOW)
+        score += 15 * (1 - golden_days_ago / golden_window)
     # 60일선 상승 강도 (15)
     if rising_strength is not None and rising_strength > 0:
         score += min(15.0, rising_strength * 300)   # 5% 상승이면 만점
@@ -351,6 +353,15 @@ def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True) -> dic
 
 # ── 메인 ─────────────────────────────────────────────────────────
 def main() -> None:
+    parser = argparse.ArgumentParser(description='U턴 스캔 (일일/주간)')
+    parser.add_argument('--report-type', choices=['daily', 'weekly'],
+                        default='daily', help='리포트 유형 (기본 daily)')
+    args = parser.parse_args()
+    report_type = args.report_type
+    golden_window = 10 if report_type == 'weekly' else 5
+    print(f"리포트 유형: {report_type} "
+          f"(골든크로스 윈도우 {golden_window}거래일)\n")
+
     print("종목 마스터 로드…")
     stocks = fetch_stocks()
     print(f"  ✓ {len(stocks)}개 종목\n")
@@ -366,7 +377,8 @@ def main() -> None:
         df = prices_map.get(ticker)
         if df is None or df.empty:
             continue
-        r = analyze(df, market_cap, market_above_ma60=True)
+        r = analyze(df, market_cap, market_above_ma60=True,
+                    golden_window=golden_window)
         if r is None:
             continue
         r["ticker"], r["name"] = ticker, name
@@ -443,8 +455,8 @@ def main() -> None:
     # ── DB 저장 ──
     if not base_date:
         return
-    print(f"\nreports + scan_results 저장 (daily, base_date={base_date})…")
-    report_id = upsert_report("daily", base_date, is_final=True)
+    print(f"\nreports + scan_results 저장 ({report_type}, base_date={base_date})…")
+    report_id = upsert_report(report_type, base_date, is_final=True)
     if not top:
         # 통과 0개여도 reports는 만들고 scan_results는 비워둠
         print(f"  ✓ reports 생성됨 (id={report_id}). 후보 없음으로 scan_results는 비어있음.")
