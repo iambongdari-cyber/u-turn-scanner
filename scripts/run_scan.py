@@ -69,6 +69,39 @@ def fetch_stocks() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def fetch_market_index_status() -> dict[str, bool]:
+    """market_indices 에서 KOSPI/KOSDAQ 각각의 '오늘 종가 > 60일선' 여부를 계산.
+    반환: {'KOSPI': True/False, 'KOSDAQ': True/False}.
+    데이터 없는 시장은 안전하게 True(중립적으로 5점 부여)로 두지 않고,
+    데이터가 있어야만 True가 가능하도록 한다."""
+    result: dict[str, bool] = {}
+    for index_name in ("KOSPI", "KOSDAQ"):
+        r = requests.get(
+            f"{REST_URL}/market_indices",
+            headers=HEADERS,
+            params={
+                "select": "date,close",
+                "index_name": f"eq.{index_name}",
+                "order": "date.desc",
+                "limit": "60",
+            },
+            timeout=30,
+        )
+        if not r.ok:
+            result[index_name] = False
+            continue
+        rows = r.json()
+        if len(rows) < 60:
+            # 60일치 못 채우면 판정 불가
+            result[index_name] = False
+            continue
+        closes = [float(row["close"]) for row in rows]
+        today_close = closes[0]
+        ma60 = sum(closes) / 60
+        result[index_name] = today_close > ma60
+    return result
+
+
 def fetch_all_prices() -> dict[str, pd.DataFrame]:
     """daily_prices 전체를 한 번에 가져와 ticker별 DataFrame dict로 반환.
     종목별로 따로 HTTP 호출하는 것보다 훨씬 빠르다 (수천 번 → 수백 번)."""
@@ -366,6 +399,11 @@ def main() -> None:
     stocks = fetch_stocks()
     print(f"  ✓ {len(stocks)}개 종목\n")
 
+    print("시장지수 상태 조회…")
+    market_status = fetch_market_index_status()
+    print(f"  KOSPI 60일선 위: {market_status.get('KOSPI', False)}")
+    print(f"  KOSDAQ 60일선 위: {market_status.get('KOSDAQ', False)}\n")
+
     prices_map = fetch_all_prices()
     print()
 
@@ -373,11 +411,15 @@ def main() -> None:
     analyzed = []
     base_date = None
     for _, srow in stocks.iterrows():
-        ticker, name, market_cap = srow["ticker"], srow["name"], srow["market_cap"]
+        ticker = srow["ticker"]
+        name = srow["name"]
+        market_cap = srow["market_cap"]
+        stock_market = srow.get("market", "KOSPI")
+        market_above_ma60 = market_status.get(stock_market, False)
         df = prices_map.get(ticker)
         if df is None or df.empty:
             continue
-        r = analyze(df, market_cap, market_above_ma60=True,
+        r = analyze(df, market_cap, market_above_ma60=market_above_ma60,
                     golden_window=golden_window)
         if r is None:
             continue

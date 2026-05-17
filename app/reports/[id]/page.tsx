@@ -67,6 +67,9 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
     }
   }
 
+  // 시장 요약: KOSPI/KOSDAQ 최근 60거래일에서 ma60 계산
+  const marketSummary = await loadMarketSummary();
+
   return (
     <main className="container mx-auto max-w-5xl p-8">
       <div className="mb-6">
@@ -83,6 +86,8 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
            </p>
          )}
       </div>
+
+      <MarketSummaryBox summary={marketSummary} />
 
       {rows.length === 0 ? (
         <div className="rounded border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
@@ -207,5 +212,107 @@ function FinBadge({ status }: { status: string | null }) {
     <span className={`inline-flex rounded px-2 py-0.5 text-xs ${cls}`}>
       {label}
     </span>
+  );
+}
+
+
+// ── 시장 요약 ──────────────────────────────────────────────────
+interface IndexInfo {
+  name: 'KOSPI' | 'KOSDAQ';
+  date: string;
+  close: number;
+  change_pct: number | null;
+  above_ma60: boolean;
+}
+
+interface MarketSummary {
+  kospi: IndexInfo | null;
+  kosdaq: IndexInfo | null;
+  status: '강세' | '중립' | '약세';
+}
+
+async function loadMarketSummary(): Promise<MarketSummary> {
+  async function loadOne(name: 'KOSPI' | 'KOSDAQ'): Promise<IndexInfo | null> {
+    const { data } = await supabase
+      .from('market_indices')
+      .select('date, close, change_pct')
+      .eq('index_name', name)
+      .order('date', { ascending: false })
+      .limit(60);
+    if (!data || data.length < 60) return null;
+    const closes = data.map((d: any) => Number(d.close));
+    const ma60 = closes.reduce((a, b) => a + b, 0) / 60;
+    const latest = data[0];
+    return {
+      name,
+      date: latest.date,
+      close: Number(latest.close),
+      change_pct: latest.change_pct != null ? Number(latest.change_pct) : null,
+      above_ma60: Number(latest.close) > ma60,
+    };
+  }
+
+  const [kospi, kosdaq] = await Promise.all([loadOne('KOSPI'), loadOne('KOSDAQ')]);
+  let status: '강세' | '중립' | '약세' = '중립';
+  if (kospi && kosdaq) {
+    const aboveCount = (kospi.above_ma60 ? 1 : 0) + (kosdaq.above_ma60 ? 1 : 0);
+    if (aboveCount === 2) status = '강세';
+    else if (aboveCount === 0) status = '약세';
+    else status = '중립';
+  }
+  return { kospi, kosdaq, status };
+}
+
+function MarketSummaryBox({ summary }: { summary: MarketSummary }) {
+  if (!summary.kospi && !summary.kosdaq) return null;
+
+  const statusColor =
+    summary.status === '강세' ? 'bg-green-100 text-green-800' :
+    summary.status === '약세' ? 'bg-red-100 text-red-800' :
+                                  'bg-slate-200 text-slate-700';
+
+  return (
+    <div className="mb-6 rounded-md border border-slate-300 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-700">시장 요약</h2>
+        <span className={`inline-flex rounded px-2 py-0.5 text-xs ${statusColor}`}>
+          시장 상태: {summary.status}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+        {summary.kospi && <IndexRow info={summary.kospi} />}
+        {summary.kosdaq && <IndexRow info={summary.kosdaq} />}
+      </div>
+      <p className="mt-3 text-xs text-slate-500">
+        강세: 두 지수 모두 60일선 위 / 중립: 하나만 / 약세: 둘 다 60일선 아래
+      </p>
+    </div>
+  );
+}
+
+function IndexRow({ info }: { info: IndexInfo }) {
+  const changeColor =
+    info.change_pct == null ? 'text-slate-500' :
+    info.change_pct > 0 ? 'text-red-600' :
+    info.change_pct < 0 ? 'text-blue-600' :
+                            'text-slate-500';
+  const ma60Cls = info.above_ma60
+    ? 'bg-green-100 text-green-800'
+    : 'bg-orange-100 text-orange-800';
+  return (
+    <div className="flex items-center justify-between rounded bg-slate-50 px-3 py-2">
+      <div>
+        <span className="font-medium text-slate-700">{info.name}</span>
+        <span className="ml-2 tabular-nums">{info.close.toLocaleString()}</span>
+        {info.change_pct != null && (
+          <span className={`ml-2 tabular-nums ${changeColor}`}>
+            {info.change_pct > 0 ? '+' : ''}{info.change_pct.toFixed(2)}%
+          </span>
+        )}
+      </div>
+      <span className={`inline-flex rounded px-2 py-0.5 text-xs ${ma60Cls}`}>
+        60일선 {info.above_ma60 ? '위' : '아래'}
+      </span>
+    </div>
   );
 }
