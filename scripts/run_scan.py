@@ -55,7 +55,8 @@ def fetch_stocks() -> pd.DataFrame:
         r = requests.get(
             f"{REST_URL}/stocks",
             headers={**HEADERS, "Range": f"{offset}-{offset + PAGE - 1}"},
-            params={"select": "ticker,name,market,market_cap", "order": "ticker.asc"},
+            params={"select": "ticker,name,market,market_cap,sector",
+                    "order": "ticker.asc"},
             timeout=30,
         )
         r.raise_for_status()
@@ -69,12 +70,15 @@ def fetch_stocks() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def fetch_market_index_status() -> dict[str, bool]:
-    """market_indices 에서 KOSPI/KOSDAQ 각각의 '오늘 종가 > 60일선' 여부를 계산.
-    반환: {'KOSPI': True/False, 'KOSDAQ': True/False}.
-    데이터 없는 시장은 안전하게 True(중립적으로 5점 부여)로 두지 않고,
-    데이터가 있어야만 True가 가능하도록 한다."""
-    result: dict[str, bool] = {}
+def fetch_market_index_data() -> tuple[dict[str, bool], dict[str, float]]:
+    """market_indices 에서 KOSPI/KOSDAQ의 (ma60 위 여부, 20거래일 수익률%) 반환.
+
+    반환:
+      ma60_status: {'KOSPI': True/False, 'KOSDAQ': True/False}
+      returns_20d: {'KOSPI': 5.3, 'KOSDAQ': -2.1}  (% 단위)
+    """
+    ma60_status: dict[str, bool] = {}
+    returns_20d: dict[str, float] = {}
     for index_name in ("KOSPI", "KOSDAQ"):
         r = requests.get(
             f"{REST_URL}/market_indices",
@@ -88,18 +92,21 @@ def fetch_market_index_status() -> dict[str, bool]:
             timeout=30,
         )
         if not r.ok:
-            result[index_name] = False
+            ma60_status[index_name] = False
             continue
         rows = r.json()
         if len(rows) < 60:
-            # 60일치 못 채우면 판정 불가
-            result[index_name] = False
+            ma60_status[index_name] = False
             continue
+        # rows[0]이 최신, rows[59]가 60일 전
         closes = [float(row["close"]) for row in rows]
         today_close = closes[0]
         ma60 = sum(closes) / 60
-        result[index_name] = today_close > ma60
-    return result
+        ma60_status[index_name] = today_close > ma60
+        # 20일 수익률: (오늘 - 20거래일 전) / 20거래일 전 * 100
+        if len(closes) >= 21 and closes[20] > 0:
+            returns_20d[index_name] = (closes[0] - closes[20]) / closes[20] * 100
+    return ma60_status, returns_20d
 
 
 def fetch_all_prices() -> dict[str, pd.DataFrame]:
@@ -205,7 +212,9 @@ def ichimoku(df: pd.DataFrame) -> dict:
 
 # ── 종목 분석 ────────────────────────────────────────────────────
 def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True,
-            golden_window: int = GOLDEN_WINDOW) -> dict | None:
+            golden_window: int = GOLDEN_WINDOW,
+            market_20d_return: float | None = None,
+            sector_20d_return: float | None = None) -> dict | None:
     n = len(df)
     if n < 60:
         return None
@@ -318,7 +327,18 @@ def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True,
         elif value_ratio >= 1.0: score += 5
     # 시장지수 60일선 위 (5)
     if market_above_ma60: score += 5
-    # 업종/시장 상대강도 (5+5): MVP 미적용
+    # 종목 20일 수익률 (시장/업종 상대강도 비교용)
+    stock_20d_return = None
+    if t >= 20 and pd.notna(close.iat[t-20]) and close.iat[t-20] > 0:
+        stock_20d_return = (close.iat[t] - close.iat[t-20]) / close.iat[t-20] * 100
+    # 시장 대비 상대강도 (5)
+    if (stock_20d_return is not None and market_20d_return is not None
+            and stock_20d_return > market_20d_return):
+        score += 5
+    # 업종 상대강도 (5)
+    if (stock_20d_return is not None and sector_20d_return is not None
+            and stock_20d_return > sector_20d_return):
+        score += 5
     # 손익비 (5)
     if rr_ratio is not None:
         if   rr_ratio >= 2.0: score += 5
@@ -328,11 +348,9 @@ def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True,
     score = round(score, 2)
 
     # ── MVP 점수 보정 ──
-    # 업종 상대강도(5) + 시장 대비 상대강도(5) = 10점은 아직 데이터 미연결이라
-    # 항상 0점. 실제 적용 가능한 배점은 90점. 이를 100점 만점으로 환산해
-    # 기획서의 90/80/70 판정 기준이 정상 작동하도록 한다.
-    # → 17~18단계에서 두 지표를 연결하면 이 보정을 제거한다.
-    score = round(score / 90.0 * 100, 2)
+    # 시장 대비 상대강도(5점)는 17단계에서, 업종 상대강도(5점)는 18단계에서 연결.
+    # 두 지표 모두 데이터가 있어야만 점수 부여되므로, 데이터 없으면 자연스럽게 미부여.
+    # 따라서 별도 보정 없이 기획서 그대로 100점 만점 운용.
 
     # ── 필수 통과 + 최종 판정 ──
     must_pass = cond_golden and cond_above_ma60 and cond_ma60_rising
@@ -400,12 +418,36 @@ def main() -> None:
     print(f"  ✓ {len(stocks)}개 종목\n")
 
     print("시장지수 상태 조회…")
-    market_status = fetch_market_index_status()
-    print(f"  KOSPI 60일선 위: {market_status.get('KOSPI', False)}")
-    print(f"  KOSDAQ 60일선 위: {market_status.get('KOSDAQ', False)}\n")
+    market_status, market_returns = fetch_market_index_data()
+    print(f"  KOSPI  60일선 {'위' if market_status.get('KOSPI', False) else '아래'} "
+          f"/ 20일 수익률 {market_returns.get('KOSPI', float('nan')):+.2f}%")
+    print(f"  KOSDAQ 60일선 {'위' if market_status.get('KOSDAQ', False) else '아래'} "
+          f"/ 20일 수익률 {market_returns.get('KOSDAQ', float('nan')):+.2f}%\n")
 
     prices_map = fetch_all_prices()
     print()
+
+    # 업종별 평균 20일 수익률 계산 (sector가 채워진 종목들만)
+    print("업종별 평균 20일 수익률 계산…")
+    sector_returns_20d: dict[str, float] = {}
+    sector_groups: dict[str, list[float]] = {}
+    for _, srow in stocks.iterrows():
+        sector = srow.get("sector")
+        if not sector or pd.isna(sector):
+            continue
+        df = prices_map.get(srow["ticker"])
+        if df is None or len(df) < 21:
+            continue
+        close = df["close"]
+        t = len(df) - 1
+        prev = close.iat[t - 20]
+        if pd.notna(prev) and prev > 0 and pd.notna(close.iat[t]):
+            ret = (close.iat[t] - prev) / prev * 100
+            sector_groups.setdefault(sector, []).append(ret)
+    for sector, rets in sector_groups.items():
+        if len(rets) >= 3:   # 표본 3개 이상인 업종만
+            sector_returns_20d[sector] = sum(rets) / len(rets)
+    print(f"  ✓ {len(sector_returns_20d)}개 업종 (표본 3+ )\n")
 
     print("종목별 분석…")
     analyzed = []
@@ -416,11 +458,17 @@ def main() -> None:
         market_cap = srow["market_cap"]
         stock_market = srow.get("market", "KOSPI")
         market_above_ma60 = market_status.get(stock_market, False)
+        market_20d = market_returns.get(stock_market)
+        # 업종 상대강도: 종목의 sector → 업종 평균 20일 수익률
+        stock_sector = srow.get("sector")
+        sector_20d = sector_returns_20d.get(stock_sector) if stock_sector and not pd.isna(stock_sector) else None
         df = prices_map.get(ticker)
         if df is None or df.empty:
             continue
         r = analyze(df, market_cap, market_above_ma60=market_above_ma60,
-                    golden_window=golden_window)
+                    golden_window=golden_window,
+                    market_20d_return=market_20d,
+                    sector_20d_return=sector_20d)
         if r is None:
             continue
         r["ticker"], r["name"] = ticker, name
