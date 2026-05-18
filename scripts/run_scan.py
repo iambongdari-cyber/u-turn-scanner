@@ -109,6 +109,41 @@ def fetch_market_index_data() -> tuple[dict[str, bool], dict[str, float]]:
     return ma60_status, returns_20d
 
 
+def fetch_news_risks() -> dict[str, dict]:
+    """news_risks 테이블 전체 조회. {ticker: {level, latest_date, latest_title}} 반환.
+
+    CRITICAL 종목은 candidates에서 자동 제외. WARN은 표시만 한다.
+    """
+    risks: dict[str, dict] = {}
+    offset, PAGE = 0, 1000
+    while True:
+        r = requests.get(
+            f"{REST_URL}/news_risks",
+            headers={**HEADERS, "Range": f"{offset}-{offset + PAGE - 1}"},
+            params={
+                "select": "ticker,level,latest_date,latest_title",
+                "order": "ticker.asc",
+            },
+            timeout=30,
+        )
+        if not r.ok:
+            # 테이블 없거나 비어있으면 빈 dict 반환 (기능 비활성 모드)
+            return {}
+        page = r.json()
+        if not page:
+            break
+        for row in page:
+            risks[row["ticker"]] = {
+                "level": row["level"],
+                "latest_date": row.get("latest_date"),
+                "latest_title": row.get("latest_title"),
+            }
+        if len(page) < PAGE:
+            break
+        offset += PAGE
+    return risks
+
+
 def fetch_all_prices() -> dict[str, pd.DataFrame]:
     """daily_prices 전체를 한 번에 가져와 ticker별 DataFrame dict로 반환.
     종목별로 따로 HTTP 호출하는 것보다 훨씬 빠르다 (수천 번 → 수백 번)."""
@@ -424,6 +459,12 @@ def main() -> None:
     print(f"  KOSDAQ 60일선 {'위' if market_status.get('KOSDAQ', False) else '아래'} "
           f"/ 20일 수익률 {market_returns.get('KOSDAQ', float('nan')):+.2f}%\n")
 
+    print("뉴스 리스크 조회…")
+    news_risks = fetch_news_risks()
+    n_crit_risk = sum(1 for v in news_risks.values() if v["level"] == "CRITICAL")
+    n_warn_risk = sum(1 for v in news_risks.values() if v["level"] == "WARN")
+    print(f"  CRITICAL {n_crit_risk}개 / WARN {n_warn_risk}개\n")
+
     prices_map = fetch_all_prices()
     print()
 
@@ -482,16 +523,32 @@ def main() -> None:
         return
 
     # ── 통과 후보 ──
-    # 필수 5조건 + (거래대금·시가총액·U턴) 통과 + EXCLUDE 아님.
+    # 필수 5조건 + (거래대금·시가총액·U턴) 통과 + EXCLUDE 아님 + 뉴스 CRITICAL 아님.
     # 이격도 20% 초과(CHASE_RISK)는 제외하지 않고 "추격 주의"로 표시하며 포함한다.
     # (기획서 12장: 이격도 초과는 제외가 아니라 추격 주의 경고)
-    candidates = [
+    # (기획서 18장: 뉴스 CRITICAL 종목은 자동 제외)
+    pre_candidates = [
         r for r in analyzed
         if r["cond_golden"] and r["cond_above_ma60"] and r["cond_ma60_rising"]
         and r["cond_lagging_ok"] and r["cond_cloud_red"]
         and r["cond_value_ok"] and r["cond_cap_ok"] and r["cond_uturn_ok"]
         and r["final_grade"] != "EXCLUDE"
     ]
+    excluded_by_news = [
+        r for r in pre_candidates
+        if news_risks.get(r["ticker"], {}).get("level") == "CRITICAL"
+    ]
+    candidates = [
+        r for r in pre_candidates
+        if news_risks.get(r["ticker"], {}).get("level") != "CRITICAL"
+    ]
+    if excluded_by_news:
+        print(f"\n[뉴스 CRITICAL 제외 {len(excluded_by_news)}개]")
+        for r in excluded_by_news:
+            risk = news_risks.get(r["ticker"], {})
+            title = (risk.get("latest_title") or "")[:50]
+            date_s = risk.get("latest_date") or ""
+            print(f"  ✗ {r['ticker']} {r['name']:<10} ({date_s}) {title}")
     candidates.sort(key=lambda x: x["score"], reverse=True)
     top = candidates[:TOP_N]
 

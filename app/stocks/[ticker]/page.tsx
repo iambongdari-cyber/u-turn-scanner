@@ -68,6 +68,14 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
     .limit(1);
   const fin = finRows && finRows.length > 0 ? finRows[0] : null;
 
+  // 뉴스 리스크 (없으면 OK, CRITICAL/WARN이면 표시)
+  const { data: newsRow } = await supabase
+    .from('news_risks')
+    .select('level, latest_date, latest_title')
+    .eq('ticker', ticker)
+    .maybeSingle();
+  const newsRisk = newsRow ?? null;
+
   const candles: Candle[] = (prices ?? []).map((p) => ({
     time: p.date,
     open: Number(p.open),
@@ -232,6 +240,8 @@ export default async function StockDetailPage({ params, searchParams }: PageProp
             </div>
           )}
 
+          <NewsRiskBox risk={newsRisk} />
+
           {reportId && (
             <MemoForm reportId={reportId} ticker={ticker} initial={note} />
           )}
@@ -249,6 +259,65 @@ function ConditionRow({ label, pass }: { label: string; pass: boolean | null }) 
         {pass ? '○' : '·'}
       </span>
     </li>
+  );
+}
+
+function NewsRiskBox({ risk }: {
+  risk: { level: string; latest_date: string | null; latest_title: string | null } | null;
+}) {
+  // 데이터 없음 = OK (특이사항 없음). 별도 박스 안 띄움.
+  if (!risk) {
+    return (
+      <div className="rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold text-slate-700">뉴스/공시</h2>
+          <span className="inline-flex rounded bg-green-100 px-2 py-0.5 text-xs text-green-800">
+            정상
+          </span>
+        </div>
+        <p className="text-xs text-slate-500">
+          최근 30일 공시에서 위험 키워드가 감지되지 않았습니다.
+        </p>
+      </div>
+    );
+  }
+
+  const isCritical = risk.level === 'CRITICAL';
+  const isWarn = risk.level === 'WARN';
+  const borderCls = isCritical ? 'border-red-300 bg-red-50'
+                  : isWarn ? 'border-yellow-300 bg-yellow-50'
+                  : 'border-slate-200 bg-white';
+  const badgeCls = isCritical ? 'bg-red-100 text-red-800'
+                 : isWarn ? 'bg-yellow-100 text-yellow-800'
+                 : 'bg-slate-100 text-slate-600';
+  const label = isCritical ? '위험' : isWarn ? '주의' : risk.level;
+  const note = isCritical
+    ? '횡령·배임·상장폐지·감사의견 등 중대 위험. 후보에서 자동 제외됩니다.'
+    : isWarn
+    ? '유상증자·전환사채·불성실공시 등 주가 영향 큰 공시. 직접 판단 필요.'
+    : null;
+
+  return (
+    <div className={`rounded-md border p-4 shadow-sm ${borderCls}`}>
+      <div className="mb-2 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-slate-700">뉴스/공시</h2>
+        <span className={`inline-flex rounded px-2 py-0.5 text-xs ${badgeCls}`}>
+          {label}
+        </span>
+      </div>
+      <dl className="grid grid-cols-[5rem_1fr] gap-y-1 text-sm">
+        <dt className="text-slate-500">최근일자</dt>
+        <dd className="text-slate-700">{risk.latest_date ?? '-'}</dd>
+        <dt className="text-slate-500">보고서명</dt>
+        <dd className="text-slate-700">{risk.latest_title ?? '-'}</dd>
+      </dl>
+      {note && (
+        <p className="mt-3 text-xs text-slate-600">{note}</p>
+      )}
+      <p className="mt-2 text-[10px] text-slate-400">
+        DART 공시 보고서명 키워드 매칭 기준. 본문 미반영.
+      </p>
+    </div>
   );
 }
 

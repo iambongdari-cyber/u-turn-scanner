@@ -67,6 +67,18 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
     }
   }
 
+  // 뉴스 리스크 SELECT — CRITICAL은 candidates에서 이미 제외됐으니 표시되는 건 주로 WARN
+  const newsMap = new Map<string, any>();
+  if (tickers.length > 0) {
+    const { data: news } = await supabase
+      .from('news_risks')
+      .select('ticker, level, latest_date, latest_title')
+      .in('ticker', tickers);
+    for (const n of news ?? []) {
+      newsMap.set(n.ticker, n);
+    }
+  }
+
   // 시장 요약: KOSPI/KOSDAQ 최근 60거래일에서 ma60 계산
   const marketSummary = await loadMarketSummary();
 
@@ -112,6 +124,7 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
               <TableHead className="text-right">손익비</TableHead>
               <TableHead>판정</TableHead>
               <TableHead>재무</TableHead>
+              <TableHead>뉴스</TableHead>
               <TableHead className="w-24"></TableHead>
             </TableRow>
           </TableHeader>
@@ -152,6 +165,9 @@ export default async function ReportPage({ params, searchParams }: PageProps) {
                 </TableCell>
                 <TableCell>
                   <FinBadge status={finMap.get(r.ticker)?.fin_status ?? null} />
+                </TableCell>
+                <TableCell>
+                  <NewsBadge level={newsMap.get(r.ticker)?.level ?? null} />
                 </TableCell>
                 <TableCell>
                   <Button asChild variant="outline" size="sm">
@@ -211,6 +227,37 @@ function FinBadge({ status }: { status: string | null }) {
   return (
     <span className={`inline-flex rounded px-2 py-0.5 text-xs ${cls}`}>
       {label}
+    </span>
+  );
+}
+
+function NewsBadge({ level }: { level: string | null }) {
+  // 테이블에 없으면 = OK(특이사항 없음)
+  // CRITICAL은 후보에서 자동 제외되므로 일반 행에선 거의 나오지 않음 (안전망용으로 표시)
+  if (!level) {
+    return (
+      <span className="inline-flex rounded bg-green-100 px-2 py-0.5 text-xs text-green-800">
+        정상
+      </span>
+    );
+  }
+  if (level === 'WARN') {
+    return (
+      <span className="inline-flex rounded bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
+        주의
+      </span>
+    );
+  }
+  if (level === 'CRITICAL') {
+    return (
+      <span className="inline-flex rounded bg-red-100 px-2 py-0.5 text-xs text-red-800">
+        위험
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+      {level}
     </span>
   );
 }
