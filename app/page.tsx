@@ -39,6 +39,9 @@ export default async function Home() {
         <Link href="/history" className="text-blue-600 hover:underline">
           📅 과거 리포트 전체 보기
         </Link>
+        <Link href="/backtest" className="text-blue-600 hover:underline">
+          📊 백테스트 결과
+        </Link>
       </div>
     </main>
   );
