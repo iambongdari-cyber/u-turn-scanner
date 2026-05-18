@@ -10,10 +10,10 @@ run_backtest.py
   리포트 base_date 다음 거래일 시가에 매수
 
 [전략 청산]
-  - 첫날 시가가 손절가 이하 → 즉시 시가에 STOP
-  - 첫날 시가가 목표가 이상 → 즉시 시가에 TARGET
-  - 이후 일일: 저가 ≤ stop_loss → STOP at stop_loss
-              고가 ≥ target    → TARGET at target
+  - 첫날 시가가 목표가 이상 → 즉시 시가에 TARGET (갭상승)
+  - 매일 종가 ≤ 손절선 → STOP at 종가 (intraday whipsaw 회피)
+  - 매일 고가 ≥ 목표가 → TARGET at 목표가 (limit order 가정)
+  - 같은 날 둘 다 충족 → STOP 우선 (보수적)
   - 60일 도달 → TIMEOUT (60일째 종가)
   - 60일 미만 → OPEN (현재까지 평가, 다음 실행 때 갱신)
 
@@ -199,31 +199,29 @@ def simulate(
         d = window["date"].iat[i].date()
         o = float(window["open"].iat[i])
         h = float(window["high"].iat[i])
-        l = float(window["low"].iat[i])
+        c = float(window["close"].iat[i])
 
-        if i == 0:
-            # 진입일 갭 처리: 시가가 손절/목표 통과면 시가에 즉시 청산
-            if o <= stop_loss:
-                strategy_exit_date = d
-                strategy_exit_price = o
-                strategy_exit_reason = "STOP"
-                strategy_holding_days = 1
-                break
-            if o >= target_price:
-                strategy_exit_date = d
-                strategy_exit_price = o
-                strategy_exit_reason = "TARGET"
-                strategy_holding_days = 1
-                break
-
-        # 일반 처리: 저가 손절 우선 → 고가 목표
-        # (보수적: 같은 날 둘 다 닿으면 손절을 먼저로 본다)
-        if l <= stop_loss:
+        # ── 진입일 갭상승: 시가가 목표가 위면 즉시 시가에 익절 ──
+        # (손절은 종가 기반이라 갭하락 시에도 종가까지 보유)
+        if i == 0 and o >= target_price:
             strategy_exit_date = d
-            strategy_exit_price = stop_loss
+            strategy_exit_price = o
+            strategy_exit_reason = "TARGET"
+            strategy_holding_days = 1
+            break
+
+        # ── 손절: 종가 기반 ──
+        # 2차 튜닝 (2026-05-18): 기존 저가 기반 → 종가 기반.
+        # 장중에 손절선 잠깐 닿아도 종가가 손절선 위면 holding 유지.
+        # intraday whipsaw 회피용. STOP 비율과 평균 손실폭이 크게 줄어들 것으로 예상.
+        if c <= stop_loss:
+            strategy_exit_date = d
+            strategy_exit_price = c
             strategy_exit_reason = "STOP"
             strategy_holding_days = i + 1
             break
+
+        # ── 익절: 고가 기반 (목표가 닿으면 limit order로 청산) ──
         if h >= target_price:
             strategy_exit_date = d
             strategy_exit_price = target_price

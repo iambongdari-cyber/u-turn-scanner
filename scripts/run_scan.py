@@ -335,50 +335,62 @@ def analyze(df: pd.DataFrame, market_cap, market_above_ma60: bool = True,
     cond_cap_ok     = (market_cap is None) or (market_cap >= MIN_MARKET_CAP)
     cond_uturn_ok   = days_below_ma60 >= MIN_DAYS_BELOW_MA60_60D
 
-    # ── 점수화 (100점 만점) ──
+    # ── 점수화 (100점 만점) — 백테스트 1차 튜닝 (2026-05-18) ──
+    # 변별력 분석(analyze_backtest.py) 결과 기반:
+    #   - 이격도: 상관 +0.169. 기존 "작을수록↑"는 역방향 → 곡선으로 교체. 10-20% 만점.
+    #   - 상승여력: 상관 +0.142. 신규 가산점.
+    #   - 시장 60일선 위: 모든 종목에 동일 적용 → 변별력 0 → 삭제.
+    #   - 거래대금: 상관 ≈0 → 가중치 축소.
+    #   - 골든크로스 일수: 상관 +0.08 (약함) → 가중치 축소.
     score = 0.0
-    # 골든크로스 최근일수록 (15)
+    # 골든크로스 최근일수록 (10) — 기존 15
     if cond_golden and golden_days_ago is not None:
-        score += 15 * (1 - golden_days_ago / golden_window)
-    # 60일선 상승 강도 (15)
+        score += 10 * (1 - golden_days_ago / golden_window)
+    # 60일선 상승 강도 (15) — 유지
     if rising_strength is not None and rising_strength > 0:
         score += min(15.0, rising_strength * 300)   # 5% 상승이면 만점
-    # 후행스팬 (10)
+    # 후행스팬 (10) — 유지
     if cond_lagging_ok: score += 10
-    # 앞 구름 (10)
+    # 앞 구름 (10) — 유지
     if cond_cloud_red:  score += 10
-    # 이격도 양호 (10)
+    # 이격도 모멘텀 곡선 (20) — NEW. 10-20%가 sweet spot, 20%+는 CHASE_RISK 라벨 유지하되 점수 페널티 없음.
     if disparity_pct is not None:
-        if   disparity_pct <= 5:  score += 10
-        elif disparity_pct <= 10: score += 8
-        elif disparity_pct <= 15: score += 5
-        elif disparity_pct <= 20: score += 2
-    # 거래대금 충족 (10)
-    if cond_value_ok:   score += 10
-    # 거래량/거래대금 증가 (10)
+        if   disparity_pct < 0:    score += 0
+        elif disparity_pct < 5:    score += 3
+        elif disparity_pct < 10:   score += 7
+        elif disparity_pct < 15:   score += 18
+        elif disparity_pct < 20:   score += 20   # sweet spot
+        else:                      score += 12   # 20%+ (강한 추세, 모멘텀 지속)
+    # 거래대금 충족 (5) — 기존 10 (필터 조건과 중복)
+    if cond_value_ok:   score += 5
+    # 거래대금 증가 (5) — 기존 10 (변별력 약함)
     if value_ratio is not None:
-        if   value_ratio >= 2.0: score += 10
-        elif value_ratio >= 1.5: score += 8
-        elif value_ratio >= 1.0: score += 5
-    # 시장지수 60일선 위 (5)
-    if market_above_ma60: score += 5
+        if   value_ratio >= 2.0: score += 5
+        elif value_ratio >= 1.5: score += 4
+        elif value_ratio >= 1.0: score += 2
     # 종목 20일 수익률 (시장/업종 상대강도 비교용)
     stock_20d_return = None
     if t >= 20 and pd.notna(close.iat[t-20]) and close.iat[t-20] > 0:
         stock_20d_return = (close.iat[t] - close.iat[t-20]) / close.iat[t-20] * 100
-    # 시장 대비 상대강도 (5)
+    # 시장 상대강도 (5) — 유지
     if (stock_20d_return is not None and market_20d_return is not None
             and stock_20d_return > market_20d_return):
         score += 5
-    # 업종 상대강도 (5)
+    # 업종 상대강도 (5) — 유지
     if (stock_20d_return is not None and sector_20d_return is not None
             and stock_20d_return > sector_20d_return):
         score += 5
-    # 손익비 (5)
+    # 손익비 (5) — 유지
     if rr_ratio is not None:
         if   rr_ratio >= 2.0: score += 5
         elif rr_ratio >= 1.5: score += 3
         elif rr_ratio >= 1.0: score += 1
+    # 상승여력 (10) — NEW. 60일 고가까지 멀수록 가산.
+    if upside_pct is not None:
+        if   upside_pct >= 30: score += 10
+        elif upside_pct >= 20: score += 8
+        elif upside_pct >= 10: score += 5
+    # (참고: market_above_ma60은 변별력 0이라 점수 제외. 인자는 호환성 유지를 위해 그대로 둠.)
 
     score = round(score, 2)
 
