@@ -14,6 +14,12 @@ export default async function Home() {
     .limit(1)
     .maybeSingle();
 
+  // 안 읽은 알림 개수
+  const { count: unreadCount } = await supabase
+    .from('alerts')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_read', false);
+
   return (
     <main className="container mx-auto max-w-3xl p-8">
       <header className="mb-6">
@@ -41,6 +47,14 @@ export default async function Home() {
         </Link>
         <Link href="/backtest" className="text-blue-600 hover:underline">
           📊 백테스트 결과
+        </Link>
+        <Link href="/alerts" className="flex items-center gap-1.5 text-blue-600 hover:underline">
+          🔔 알림
+          {unreadCount != null && unreadCount > 0 && (
+            <span className="inline-flex min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-medium text-white">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </Link>
       </div>
     </main>
