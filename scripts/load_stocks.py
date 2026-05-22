@@ -296,6 +296,8 @@ def main():
     parser.add_argument('--sleep', type=float, default=0.2, help='종목간 sleep 초')
     parser.add_argument('--skip-existing', action='store_true',
                         help='daily_prices에 이미 일봉이 있는 종목은 건너뜀')
+    parser.add_argument('--days', type=int, default=0,
+                        help='최근 N일치(달력일)만 받기 — 매일 갱신용. 0이면 기본 400일치')
     args = parser.parse_args()
 
     today = datetime.today()
@@ -303,7 +305,8 @@ def main():
     while today.weekday() >= 5:
         today -= timedelta(days=1)
     end_str = today.strftime('%Y-%m-%d')
-    start_str = (today - timedelta(days=400)).strftime('%Y-%m-%d')
+    lookback_days = args.days if args.days and args.days > 0 else 400
+    start_str = (today - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
 
     print(f"기간: {start_str} ~ {end_str}\n")
     overall_start = time.time()
