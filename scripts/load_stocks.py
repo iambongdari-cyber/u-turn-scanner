@@ -18,18 +18,20 @@ FinanceDataReader 로 종목 목록과 일봉을 모두 가져온다. KRX 점검
                               (NULL·관심종목은 제외하지 않음. 0이면 필터 끄기 = 전체 수집)
   --gap-fill                  종목별 DB 마지막 저장일 다음부터 오늘까지만 자동 수집
                               (이미 데이터 있는 종목=증분, 데이터 없는 신규=초기 400일)
+  --workers N                 동시 수집 스레드 수 (기본 1 = 순차/기존 동작). 2 이상이면 병렬 수집
   --log-file PATH             수집 통계(기존/제외/실제/관심종목 예외)를 로그 파일에 기록
 
 [예시]
-  python scripts/load_stocks.py --market KOSPI --limit 30   # 코스피 30개 테스트
-  python scripts/load_stocks.py --market ALL                # 코스피+코스닥 전체
-  python scripts/load_stocks.py --prices-only --gap-fill --min-cap 800   # 매일 갱신(최적화)
+  python scripts/load_stocks.py --market KOSPI --limit 30          # 코스피 30개 테스트
+  python scripts/load_stocks.py --market ALL                       # 코스피+코스닥 전체
+  python scripts/load_stocks.py --prices-only --gap-fill --min-cap 800 --workers 8   # 매일 갱신(최적화)
   python scripts/load_stocks.py --start-from 005930 --prices-only
 """
 import argparse
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -398,59 +400,82 @@ def fetch_one_ticker(ticker: str, start: str, end: str) -> list[dict]:
     return rows
 
 
+def _fetch_and_store(u: dict, start: str, end: str, sleep_sec: float) -> tuple:
+    """단일 종목: 수집 → 적재. (status, n_rows, ticker, name, err) 반환.
+    병렬/순차 양쪽에서 동일하게 사용. 데이터 형식은 fetch_one_ticker 그대로(불변)."""
+    ticker, name = u['ticker'], u['name']
+    try:
+        rows = fetch_one_ticker(ticker, start, end)
+        if not rows:
+            return ('empty', 0, ticker, name, None)
+        upsert('daily_prices', rows)
+        if sleep_sec:
+            time.sleep(sleep_sec)
+        return ('ok', len(rows), ticker, name, None)
+    except Exception as e:
+        time.sleep(1.0)
+        return ('fail', 0, ticker, name, str(e)[:80])
+
+
 def load_prices(universe: list[dict], start: str, end: str, sleep_sec: float,
                 skip_set: set[str] | None = None,
                 gap_fill: bool = False, existing_set: set[str] | None = None,
                 incremental_start: str | None = None,
-                initial_start: str | None = None) -> None:
+                initial_start: str | None = None,
+                workers: int = 1) -> None:
     """일봉 적재.
     - 기본(gap_fill=False): 모든 종목을 start~end 로 수집 (기존 동작 그대로).
     - gap_fill=True: 종목별로 시작일을 다르게 → 이미 데이터 있으면 incremental_start,
       신규(데이터 없음)면 initial_start 부터. 중복은 UPSERT(merge-duplicates)로 자동 제거.
+    - workers>=2: ThreadPoolExecutor로 동시 수집(데이터/결과는 순차와 동일, 속도만 향상).
     """
     mode = "gap-fill" if gap_fill else "full"
-    print(f"[일봉] daily_prices 적재 (종목간 sleep {sleep_sec}초, 모드 {mode})…")
-    n_total = len(universe)
-    n_ok = n_fail = n_empty = n_skip = 0
-    total_rows = 0
-    started = time.time()
+    work = [u for u in universe
+            if not (skip_set is not None and u['ticker'] in skip_set)]
+    n_skip = len(universe) - len(work)
+    n_total = len(work)
+    print(f"[일봉] daily_prices 적재 (모드 {mode}, 동시 {workers}개, sleep {sleep_sec}초)…")
 
-    for i, u in enumerate(universe, start=1):
-        ticker, name = u['ticker'], u['name']
-        # --skip-existing: 이미 있는 종목은 통째로 건너뜀
-        if skip_set is not None and ticker in skip_set:
-            n_skip += 1
-            continue
-
-        # 종목별 시작일 결정
+    def start_for(ticker: str) -> str:
         if gap_fill:
             if existing_set is not None and ticker in existing_set:
-                t_start = incremental_start or start   # 증분
-            else:
-                t_start = initial_start or start       # 신규 → 초기 수집
+                return incremental_start or start
+            return initial_start or start
+        return start
+
+    n_ok = n_fail = n_empty = 0
+    total_rows = 0
+    started = time.time()
+    done = 0
+
+    def _report(status, nrows, ticker, name, err):
+        nonlocal n_ok, n_fail, n_empty, total_rows, done
+        done += 1
+        if status == 'ok':
+            n_ok += 1
+            total_rows += nrows
+        elif status == 'empty':
+            n_empty += 1
         else:
-            t_start = start
-
-        try:
-            rows = fetch_one_ticker(ticker, t_start, end)
-            if not rows:
-                n_empty += 1
-            else:
-                upsert('daily_prices', rows)
-                total_rows += len(rows)
-                n_ok += 1
-                time.sleep(sleep_sec)
-        except Exception as e:
             n_fail += 1
-            print(f"       [{i}/{n_total}] {ticker} {name} ⚠️ {str(e)[:80]}")
-            time.sleep(1.0)
-            continue
-
-        if i % 20 == 0 or i == n_total:
+            print(f"       {ticker} {name} ⚠️ {err}")
+        if done % 50 == 0 or done == n_total:
             elapsed = time.time() - started
-            eta = elapsed / i * (n_total - i) if i < n_total else 0
-            print(f"       [{i}/{n_total}] {ticker} {name[:12]:<12s} "
-                  f"누적 {total_rows:>7}행, eta {int(eta // 60):>2}분 {int(eta % 60):>2}초")
+            eta = elapsed / done * (n_total - done) if done < n_total else 0
+            print(f"       [{done}/{n_total}] 누적 {total_rows:>7}행, "
+                  f"eta {int(eta // 60):>2}분 {int(eta % 60):>2}초")
+
+    if workers and workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [
+                ex.submit(_fetch_and_store, u, start_for(u['ticker']), end, sleep_sec)
+                for u in work
+            ]
+            for fut in as_completed(futures):
+                _report(*fut.result())
+    else:
+        for u in work:
+            _report(*_fetch_and_store(u, start_for(u['ticker']), end, sleep_sec))
 
     elapsed = time.time() - started
     print(f"\n       ✓ 적재 {n_ok} / 데이터없음 {n_empty} / 실패 {n_fail} / 건너뜀 {n_skip}")
@@ -475,6 +500,8 @@ def main():
                         help='일봉 수집 단계에서 시가총액 N억 미만 제외(NULL·관심종목 제외 안 함). 0이면 끄기')
     parser.add_argument('--gap-fill', action='store_true',
                         help='종목별 마지막 저장일 다음부터 오늘까지 자동 증분 수집')
+    parser.add_argument('--workers', type=int, default=1,
+                        help='동시 수집 스레드 수 (기본 1=순차). 2 이상이면 병렬 수집')
     parser.add_argument('--log-file', type=str, default=None,
                         help='수집 통계를 기록할 로그 파일 경로')
     args = parser.parse_args()
@@ -526,12 +553,13 @@ def main():
             print(f"[빈틈방지] 증분 시작일 {incremental_start} (신규 종목은 {initial_start}부터)\n")
             load_prices(universe, start_str, end_str, sleep_sec=args.sleep,
                         skip_set=None, gap_fill=True, existing_set=existing_set,
-                        incremental_start=incremental_start, initial_start=initial_start)
+                        incremental_start=incremental_start, initial_start=initial_start,
+                        workers=args.workers)
         else:
             # 기존 동작 그대로
             skip_set = get_tickers_with_prices() if args.skip_existing else None
             load_prices(universe, start_str, end_str, sleep_sec=args.sleep,
-                        skip_set=skip_set)
+                        skip_set=skip_set, workers=args.workers)
 
     overall = time.time() - overall_start
     print(f"\n전체 소요시간: {int(overall // 60)}분 {int(overall % 60)}초")

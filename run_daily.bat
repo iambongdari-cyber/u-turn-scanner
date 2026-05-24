@@ -25,7 +25,7 @@ if errorlevel 1 (
 echo.
 
 echo [2/9] Updating daily prices (market-cap filtered + gap-fill)...
-"%PY%" scripts\load_stocks.py --market ALL --prices-only --gap-fill --min-cap 800 --log-file "%LOGFILE%"
+"%PY%" scripts\load_stocks.py --market ALL --prices-only --gap-fill --min-cap 800 --workers 8 --log-file "%LOGFILE%"
 if errorlevel 1 (
     echo.
     echo [ERROR] Price update step failed.
