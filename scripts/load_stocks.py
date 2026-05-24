@@ -12,11 +12,18 @@ FinanceDataReader 로 종목 목록과 일봉을 모두 가져온다. KRX 점검
   --limit N                   처음 N개만 (테스트용)
   --start-from TICKER         특정 ticker부터 재개 (중간에 끊겼을 때)
   --sleep S                   종목 사이 sleep 초 (기본 0.2)
+  --skip-existing             daily_prices에 이미 일봉이 있는 종목은 건너뜀 (초기 적재 재개용)
+  --days N                    최근 N일치(달력일)만 받기. 0이면 기본 400일치
+  --min-cap N                 일봉 수집 단계에서 시가총액 N억 미만 종목 제외
+                              (NULL·관심종목은 제외하지 않음. 0이면 필터 끄기 = 전체 수집)
+  --gap-fill                  종목별 DB 마지막 저장일 다음부터 오늘까지만 자동 수집
+                              (이미 데이터 있는 종목=증분, 데이터 없는 신규=초기 400일)
+  --log-file PATH             수집 통계(기존/제외/실제/관심종목 예외)를 로그 파일에 기록
 
 [예시]
   python scripts/load_stocks.py --market KOSPI --limit 30   # 코스피 30개 테스트
-  python scripts/load_stocks.py --market KOSPI              # 코스피 전체
   python scripts/load_stocks.py --market ALL                # 코스피+코스닥 전체
+  python scripts/load_stocks.py --prices-only --gap-fill --min-cap 800   # 매일 갱신(최적화)
   python scripts/load_stocks.py --start-from 005930 --prices-only
 """
 import argparse
@@ -67,7 +74,7 @@ def upsert(table: str, rows: list[dict]) -> None:
 
 def get_tickers_with_prices() -> set[str]:
     """daily_prices 테이블에 이미 일봉이 들어있는 ticker 집합을 반환.
-    --skip-existing 옵션에서 '이미 적재된 종목 건너뛰기'에 사용."""
+    --skip-existing(건너뛰기) 및 --gap-fill(증분/초기 구분)에서 사용."""
     print("[확인] 이미 적재된 종목 조회 중…")
     seen: set[str] = set()
     offset = 0
@@ -90,6 +97,153 @@ def get_tickers_with_prices() -> set[str]:
         offset += PAGE
     print(f"       이미 일봉이 있는 종목: {len(seen)}개\n")
     return seen
+
+
+# ── 수집 대상 축소 / 빈틈 방지 헬퍼 ──────────────────────────────
+def fetch_market_caps() -> dict[str, int | None]:
+    """stocks 테이블에서 {ticker: market_cap} 조회.
+    스캔(run_scan.py)과 '동일한 출처'를 써서 필터 기준을 일치시킨다."""
+    caps: dict[str, int | None] = {}
+    offset, PAGE = 0, 1000
+    while True:
+        r = requests.get(
+            f"{REST_URL}/stocks",
+            headers={**HEADERS, "Range": f"{offset}-{offset + PAGE - 1}"},
+            params={"select": "ticker,market_cap", "order": "ticker.asc"},
+            timeout=60,
+        )
+        r.raise_for_status()
+        page = r.json()
+        if not page:
+            break
+        for row in page:
+            caps[row["ticker"]] = row.get("market_cap")
+        if len(page) < PAGE:
+            break
+        offset += PAGE
+    return caps
+
+
+def fetch_watchlist_tickers() -> set[str]:
+    """stock_notes(사용자 메모)에 등록된 관심종목 ticker 집합.
+    시가총액과 무관하게 무조건 일봉 수집을 보장하기 위함."""
+    seen: set[str] = set()
+    offset, PAGE = 0, 1000
+    while True:
+        try:
+            r = requests.get(
+                f"{REST_URL}/stock_notes",
+                headers={**HEADERS, "Range": f"{offset}-{offset + PAGE - 1}"},
+                params={"select": "ticker"},
+                timeout=60,
+            )
+        except requests.exceptions.RequestException:
+            break
+        if r.status_code not in (200, 206):
+            break
+        page = r.json()
+        if not page:
+            break
+        for row in page:
+            t = row.get("ticker")
+            if t:
+                seen.add(t)
+        if len(page) < PAGE:
+            break
+        offset += PAGE
+    return seen
+
+
+def get_global_last_price_date() -> str | None:
+    """daily_prices에서 가장 최근 거래일(YYYY-MM-DD) 1건. 데이터 없으면 None."""
+    try:
+        r = requests.get(
+            f"{REST_URL}/daily_prices",
+            headers=HEADERS,
+            params={"select": "date", "order": "date.desc", "limit": "1"},
+            timeout=30,
+        )
+        if r.status_code in (200, 206):
+            data = r.json()
+            if data:
+                return data[0]["date"]
+    except requests.exceptions.RequestException:
+        pass
+    return None
+
+
+def compute_incremental_start(today: datetime, fallback_start: str) -> str:
+    """이미 데이터가 있는 종목의 증분 수집 시작일.
+    DB의 마지막 거래일 기준으로 (간격 + 안전마진 5일), 최소 15일치를 받는다.
+    데이터가 전무하면 fallback(기본 폭) 사용."""
+    last = get_global_last_price_date()
+    if not last:
+        return fallback_start
+    try:
+        last_d = datetime.strptime(last, "%Y-%m-%d")
+    except ValueError:
+        return fallback_start
+    gap_days = (today - last_d).days
+    inc_days = max(gap_days + 5, 15)
+    return (today - timedelta(days=inc_days)).strftime("%Y-%m-%d")
+
+
+def _append_log(path: str, text: str) -> None:
+    """로그 파일에 한 블록 append (실패해도 본 작업에 영향 없음)."""
+    try:
+        d = os.path.dirname(path)
+        if d:
+            os.makedirs(d, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(text + "\n")
+    except Exception:
+        pass
+
+
+def apply_market_cap_filter(universe: list[dict], min_cap_eok: int,
+                            log_file: str | None = None) -> list[dict]:
+    """일봉 수집 대상에서 시가총액 미달 종목 제외.
+    - 시총 출처: stocks 테이블 (스캔과 동일)
+    - NULL(시총 정보 없음/불확실) → 제외하지 않고 수집 (안전)
+    - 관심종목(stock_notes) → 시총과 무관하게 수집
+    - DB의 stocks/일봉 데이터는 전혀 건드리지 않음 (수집 '대상'만 줄임)
+    """
+    threshold = min_cap_eok * 10**8
+    caps = fetch_market_caps()
+    watch = fetch_watchlist_tickers()
+
+    n_before = len(universe)
+    kept: list[dict] = []
+    n_excluded = 0
+    n_watch_exempt = 0
+
+    for u in universe:
+        t = u["ticker"]
+        cap = caps.get(t)
+        below = (cap is not None) and (cap < threshold)
+        if t in watch:
+            kept.append(u)
+            if below:
+                n_watch_exempt += 1
+            continue
+        if below:
+            n_excluded += 1
+            continue
+        kept.append(u)  # NULL(정보없음) 또는 시총 임계 이상 → 수집
+
+    print(f"[시총필터] 기준 {min_cap_eok}억 · 기존 {n_before} → 수집대상 {len(kept)} "
+          f"(시총미달 제외 {n_excluded}, 관심종목 예외 {n_watch_exempt}, NULL·임계이상 유지)")
+
+    if log_file:
+        _append_log(
+            log_file,
+            "[일봉 수집 대상]\n"
+            f"    - 기존 수집 대상: {n_before}\n"
+            f"    - 시총({min_cap_eok}억) 미달 제외: {n_excluded}\n"
+            f"    - 실제 수집 대상: {len(kept)}\n"
+            f"    - 관심종목 예외 수집: {n_watch_exempt}",
+        )
+    return kept
 
 
 # ── 필터: 우선주 / 리츠·스팩·ETN / ETF ───────────────────────────
@@ -245,8 +399,17 @@ def fetch_one_ticker(ticker: str, start: str, end: str) -> list[dict]:
 
 
 def load_prices(universe: list[dict], start: str, end: str, sleep_sec: float,
-                skip_set: set[str] | None = None) -> None:
-    print(f"[일봉] daily_prices 일괄 적재 (종목간 sleep {sleep_sec}초)…")
+                skip_set: set[str] | None = None,
+                gap_fill: bool = False, existing_set: set[str] | None = None,
+                incremental_start: str | None = None,
+                initial_start: str | None = None) -> None:
+    """일봉 적재.
+    - 기본(gap_fill=False): 모든 종목을 start~end 로 수집 (기존 동작 그대로).
+    - gap_fill=True: 종목별로 시작일을 다르게 → 이미 데이터 있으면 incremental_start,
+      신규(데이터 없음)면 initial_start 부터. 중복은 UPSERT(merge-duplicates)로 자동 제거.
+    """
+    mode = "gap-fill" if gap_fill else "full"
+    print(f"[일봉] daily_prices 적재 (종목간 sleep {sleep_sec}초, 모드 {mode})…")
     n_total = len(universe)
     n_ok = n_fail = n_empty = n_skip = 0
     total_rows = 0
@@ -254,12 +417,22 @@ def load_prices(universe: list[dict], start: str, end: str, sleep_sec: float,
 
     for i, u in enumerate(universe, start=1):
         ticker, name = u['ticker'], u['name']
-        # 이미 적재된 종목은 건너뜀
+        # --skip-existing: 이미 있는 종목은 통째로 건너뜀
         if skip_set is not None and ticker in skip_set:
             n_skip += 1
             continue
+
+        # 종목별 시작일 결정
+        if gap_fill:
+            if existing_set is not None and ticker in existing_set:
+                t_start = incremental_start or start   # 증분
+            else:
+                t_start = initial_start or start       # 신규 → 초기 수집
+        else:
+            t_start = start
+
         try:
-            rows = fetch_one_ticker(ticker, start, end)
+            rows = fetch_one_ticker(ticker, t_start, end)
             if not rows:
                 n_empty += 1
             else:
@@ -297,7 +470,13 @@ def main():
     parser.add_argument('--skip-existing', action='store_true',
                         help='daily_prices에 이미 일봉이 있는 종목은 건너뜀')
     parser.add_argument('--days', type=int, default=0,
-                        help='최근 N일치(달력일)만 받기 — 매일 갱신용. 0이면 기본 400일치')
+                        help='최근 N일치(달력일)만 받기. 0이면 기본 400일치')
+    parser.add_argument('--min-cap', type=int, default=0,
+                        help='일봉 수집 단계에서 시가총액 N억 미만 제외(NULL·관심종목 제외 안 함). 0이면 끄기')
+    parser.add_argument('--gap-fill', action='store_true',
+                        help='종목별 마지막 저장일 다음부터 오늘까지 자동 증분 수집')
+    parser.add_argument('--log-file', type=str, default=None,
+                        help='수집 통계를 기록할 로그 파일 경로')
     args = parser.parse_args()
 
     today = datetime.today()
@@ -307,6 +486,7 @@ def main():
     end_str = today.strftime('%Y-%m-%d')
     lookback_days = args.days if args.days and args.days > 0 else 400
     start_str = (today - timedelta(days=lookback_days)).strftime('%Y-%m-%d')
+    initial_start = (today - timedelta(days=400)).strftime('%Y-%m-%d')
 
     print(f"기간: {start_str} ~ {end_str}\n")
     overall_start = time.time()
@@ -333,10 +513,25 @@ def main():
 
     if not args.prices_only:
         load_stocks(universe)
+
     if not args.stocks_only:
-        skip_set = get_tickers_with_prices() if args.skip_existing else None
-        load_prices(universe, start_str, end_str, sleep_sec=args.sleep,
-                    skip_set=skip_set)
+        # 시총 필터(수집 대상 축소) — 옵션 켜졌을 때만. DB/데이터는 손대지 않음.
+        if args.min_cap and args.min_cap > 0:
+            universe = apply_market_cap_filter(universe, args.min_cap, args.log_file)
+
+        if args.gap_fill:
+            # 빈틈 방지: 있는 종목은 증분, 없는 신규는 초기 수집
+            existing_set = get_tickers_with_prices()
+            incremental_start = compute_incremental_start(today, start_str)
+            print(f"[빈틈방지] 증분 시작일 {incremental_start} (신규 종목은 {initial_start}부터)\n")
+            load_prices(universe, start_str, end_str, sleep_sec=args.sleep,
+                        skip_set=None, gap_fill=True, existing_set=existing_set,
+                        incremental_start=incremental_start, initial_start=initial_start)
+        else:
+            # 기존 동작 그대로
+            skip_set = get_tickers_with_prices() if args.skip_existing else None
+            load_prices(universe, start_str, end_str, sleep_sec=args.sleep,
+                        skip_set=skip_set)
 
     overall = time.time() - overall_start
     print(f"\n전체 소요시간: {int(overall // 60)}분 {int(overall % 60)}초")

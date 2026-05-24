@@ -43,3 +43,6 @@ next-env.d.ts
 .venv/
 __pycache__/
 *.pyc
+
+# 실행 로그 (런타임 산출물)
+/logs/
