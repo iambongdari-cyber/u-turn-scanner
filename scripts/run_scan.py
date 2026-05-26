@@ -13,6 +13,7 @@ KRX 정규장 종가 기준. 시장지수/업종은 MVP에선 미적용(17~18단
 """
 import argparse
 import os
+import pickle
 import sys
 from datetime import date
 from pathlib import Path
@@ -24,6 +25,7 @@ from dotenv import load_dotenv
 # ── 환경변수 로드 ───────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env.local")
+CACHE_PATH = ROOT / "logs" / "_price_cache.pkl"   # 일봉 캐시 (--use-price-cache 전용)
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -144,7 +146,28 @@ def fetch_news_risks() -> dict[str, dict]:
     return risks
 
 
-def fetch_all_prices() -> dict[str, pd.DataFrame]:
+def _price_db_signature() -> tuple[int | None, str | None]:
+    """캐시 유효성 판정용: daily_prices의 (행수, 최신 거래일)을 가벼운 요청으로 조회."""
+    row_count = None
+    latest_date = None
+    rc = requests.get(
+        f"{REST_URL}/daily_prices",
+        headers={**HEADERS, "Prefer": "count=exact", "Range": "0-0"},
+        params={"select": "ticker"}, timeout=60,
+    )
+    cr = rc.headers.get("content-range", "")
+    if "/" in cr and cr.split("/")[-1] not in ("*", ""):
+        row_count = int(cr.split("/")[-1])
+    rd = requests.get(
+        f"{REST_URL}/daily_prices", headers=HEADERS,
+        params={"select": "date", "order": "date.desc", "limit": "1"}, timeout=30,
+    )
+    if rd.status_code in (200, 206) and rd.json():
+        latest_date = rd.json()[0]["date"]
+    return row_count, latest_date
+
+
+def _load_prices_from_db() -> dict[str, pd.DataFrame]:
     """daily_prices 전체를 한 번에 가져와 ticker별 DataFrame dict로 반환.
     종목별로 따로 HTTP 호출하는 것보다 훨씬 빠르다 (수천 번 → 수백 번)."""
     print("일봉 데이터 일괄 로드…")
@@ -184,6 +207,43 @@ def fetch_all_prices() -> dict[str, pd.DataFrame]:
     for ticker, g in big.groupby("ticker"):
         result[ticker] = g.sort_values("date").reset_index(drop=True)
     return result
+
+
+def fetch_all_prices(use_cache: bool = False) -> dict[str, pd.DataFrame]:
+    """daily_prices를 ticker별 DataFrame dict로 반환.
+    use_cache=True면 logs/_price_cache.pkl 캐시를 (행수+최신거래일 '모두' 일치 시) 재사용해
+    일일·주간 스캔이 같은 데이터를 한 번만 로드하게 한다.
+    서명 조회/캐시 읽기/쓰기 실패는 모두 무시하고 DB 로드로 폴백한다(절대 중단하지 않음)."""
+    if not use_cache:
+        return _load_prices_from_db()
+    try:
+        sig_count, sig_date = _price_db_signature()
+    except Exception as e:
+        print(f"  ⚠️ 캐시 서명 조회 실패({str(e)[:60]}) → DB 로드")
+        return _load_prices_from_db()
+    if sig_count is None or sig_date is None:
+        print("  ⚠️ 캐시 서명(행수/최신일) 확인 불가 → DB 로드")
+        return _load_prices_from_db()
+    try:
+        if CACHE_PATH.exists():
+            with open(CACHE_PATH, "rb") as f:
+                c = pickle.load(f)
+            if (c.get("row_count") == sig_count
+                    and c.get("latest_date") == sig_date
+                    and isinstance(c.get("data"), dict)):
+                print(f"  ✓ 일봉 캐시 사용 (행수 {sig_count}, 최신 {sig_date})")
+                return c["data"]
+    except Exception as e:
+        print(f"  ⚠️ 캐시 읽기 실패({str(e)[:60]}) → DB 로드")
+    data = _load_prices_from_db()
+    try:
+        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(CACHE_PATH, "wb") as f:
+            pickle.dump({"row_count": sig_count, "latest_date": sig_date, "data": data}, f)
+        print(f"  ✓ 일봉 캐시 저장 ({CACHE_PATH.name})")
+    except Exception as e:
+        print(f"  ⚠️ 캐시 저장 실패({str(e)[:60]}) (동작 영향 없음)")
+    return data
 
 
 def upsert_report(report_type: str, base_date: date, is_final: bool = True) -> str:
@@ -454,6 +514,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='U턴 스캔 (일일/주간)')
     parser.add_argument('--report-type', choices=['daily', 'weekly'],
                         default='daily', help='리포트 유형 (기본 daily)')
+    parser.add_argument('--use-price-cache', action='store_true',
+                        help='일봉을 logs/_price_cache.pkl 캐시로 공유 (일일·주간 로드 1회). 기본 OFF')
     args = parser.parse_args()
     report_type = args.report_type
     golden_window = 10 if report_type == 'weekly' else 5
@@ -477,7 +539,7 @@ def main() -> None:
     n_warn_risk = sum(1 for v in news_risks.values() if v["level"] == "WARN")
     print(f"  CRITICAL {n_crit_risk}개 / WARN {n_warn_risk}개\n")
 
-    prices_map = fetch_all_prices()
+    prices_map = fetch_all_prices(use_cache=args.use_price_cache)
     print()
 
     # 업종별 평균 20일 수익률 계산 (sector가 채워진 종목들만)

@@ -34,6 +34,7 @@ if errorlevel 1 (
     goto :end
 )
 echo   [2] 일봉 갱신: 성공>>"%LOGFILE%"
+if exist "%~dp0logs\_price_cache.pkl" del /q "%~dp0logs\_price_cache.pkl"
 echo.
 
 echo [3/9] Updating market indices...
@@ -61,7 +62,7 @@ echo   [4] 뉴스 리스크: 성공>>"%LOGFILE%"
 echo.
 
 echo [5/9] Running DAILY scan...
-"%PY%" scripts\run_scan.py --report-type daily
+"%PY%" scripts\run_scan.py --report-type daily --use-price-cache
 if errorlevel 1 (
     echo.
     echo [ERROR] Daily scan failed.
@@ -73,7 +74,7 @@ echo   [5] 일일 스캔: 성공>>"%LOGFILE%"
 echo.
 
 echo [6/9] Running WEEKLY scan...
-"%PY%" scripts\run_scan.py --report-type weekly
+"%PY%" scripts\run_scan.py --report-type weekly --use-price-cache
 if errorlevel 1 (
     echo.
     echo [ERROR] Weekly scan failed.
