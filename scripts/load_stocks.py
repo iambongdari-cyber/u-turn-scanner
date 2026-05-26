@@ -74,18 +74,27 @@ def upsert(table: str, rows: list[dict]) -> None:
             )
 
 
-def get_tickers_with_prices() -> set[str]:
-    """daily_prices 테이블에 이미 일봉이 들어있는 ticker 집합을 반환.
-    --skip-existing(건너뛰기) 및 --gap-fill(증분/초기 구분)에서 사용."""
-    print("[확인] 이미 적재된 종목 조회 중…")
+def get_tickers_with_prices(since: str | None = None) -> set[str]:
+    """daily_prices 테이블에 일봉이 있는 ticker 집합을 반환.
+    --skip-existing(건너뛰기) 및 --gap-fill(증분/초기 구분)에서 사용.
+
+    since(YYYY-MM-DD) 지정 시 그 날짜 이후 행만 스캔한다(--fast-ticker-index).
+    활성 종목은 최근 데이터가 반드시 있으므로 gap-fill 판정 결과는 사실상 동일하고,
+    스캔 행 수가 크게 줄어 준비 단계가 빨라진다. 최근 데이터가 없는 비활성 종목만
+    누락될 수 있으나, 그 경우 '신규'로 간주되어 초기 수집되므로 결과는 안전하다."""
+    label = f"(최근 {since} 이후만 빠른 스캔)" if since else "(전체 스캔)"
+    print(f"[확인] 이미 적재된 종목 조회 중… {label}")
     seen: set[str] = set()
     offset = 0
     PAGE = 1000
     while True:
+        params = {"select": "ticker", "order": "ticker.asc"}
+        if since:
+            params["date"] = f"gte.{since}"
         r = requests.get(
             f"{REST_URL}/daily_prices",
             headers={**HEADERS, "Range": f"{offset}-{offset + PAGE - 1}"},
-            params={"select": "ticker", "order": "ticker.asc"},
+            params=params,
             timeout=120,
         )
         r.raise_for_status()
@@ -174,11 +183,13 @@ def get_global_last_price_date() -> str | None:
     return None
 
 
-def compute_incremental_start(today: datetime, fallback_start: str) -> str:
+def compute_incremental_start(today: datetime, fallback_start: str,
+                              last: str | None = None) -> str:
     """이미 데이터가 있는 종목의 증분 수집 시작일.
     DB의 마지막 거래일 기준으로 (간격 + 안전마진 5일), 최소 15일치를 받는다.
-    데이터가 전무하면 fallback(기본 폭) 사용."""
-    last = get_global_last_price_date()
+    데이터가 전무하면 fallback(기본 폭) 사용. last 인자를 주면 재조회를 생략한다."""
+    if last is None:
+        last = get_global_last_price_date()
     if not last:
         return fallback_start
     try:
@@ -500,6 +511,8 @@ def main():
                         help='일봉 수집 단계에서 시가총액 N억 미만 제외(NULL·관심종목 제외 안 함). 0이면 끄기')
     parser.add_argument('--gap-fill', action='store_true',
                         help='종목별 마지막 저장일 다음부터 오늘까지 자동 증분 수집')
+    parser.add_argument('--fast-ticker-index', action='store_true',
+                        help='기존 종목 판별을 최근 데이터 범위만 스캔해 빠르게 (gap-fill 준비단계 단축)')
     parser.add_argument('--workers', type=int, default=1,
                         help='동시 수집 스레드 수 (기본 1=순차). 2 이상이면 병렬 수집')
     parser.add_argument('--log-file', type=str, default=None,
@@ -548,8 +561,14 @@ def main():
 
         if args.gap_fill:
             # 빈틈 방지: 있는 종목은 증분, 없는 신규는 초기 수집
-            existing_set = get_tickers_with_prices()
-            incremental_start = compute_incremental_start(today, start_str)
+            last_date = get_global_last_price_date()
+            if args.fast_ticker_index and last_date:
+                since = (datetime.strptime(last_date, "%Y-%m-%d")
+                         - timedelta(days=10)).strftime("%Y-%m-%d")
+                existing_set = get_tickers_with_prices(since=since)
+            else:
+                existing_set = get_tickers_with_prices()
+            incremental_start = compute_incremental_start(today, start_str, last=last_date)
             print(f"[빈틈방지] 증분 시작일 {incremental_start} (신규 종목은 {initial_start}부터)\n")
             load_prices(universe, start_str, end_str, sleep_sec=args.sleep,
                         skip_set=None, gap_fill=True, existing_set=existing_set,

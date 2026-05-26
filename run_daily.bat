@@ -18,18 +18,18 @@ echo [1/9] Refreshing stock master (new listings)...
 if errorlevel 1 (
     echo.
     echo [WARN] Stock master refresh failed. Continuing with existing master.
-    echo   [1] 종목 마스터 갱신: 실패^(계속 진행^)>>"%LOGFILE%"
+    echo   [1] 종목 마스터 갱신: 실패-계속진행>>"%LOGFILE%"
 ) else (
     echo   [1] 종목 마스터 갱신: 성공>>"%LOGFILE%"
 )
 echo.
 
 echo [2/9] Updating daily prices (market-cap filtered + gap-fill)...
-"%PY%" scripts\load_stocks.py --market ALL --prices-only --gap-fill --min-cap 800 --workers 8 --log-file "%LOGFILE%"
+"%PY%" scripts\load_stocks.py --market ALL --prices-only --gap-fill --min-cap 800 --workers 8 --fast-ticker-index --log-file "%LOGFILE%"
 if errorlevel 1 (
     echo.
     echo [ERROR] Price update step failed.
-    "%PY%" scripts\run_logger.py fail "%LOGFILE%" "일봉 갱신" "일봉 수집 단계 실패 (네트워크/데이터 제공처 응답 이상 가능)"
+    "%PY%" scripts\run_logger.py fail "%LOGFILE%" "일봉 갱신" "일봉 수집 단계 실패 - 네트워크 또는 데이터 제공처 응답 이상일 수 있음"
     pause
     goto :end
 )
@@ -89,7 +89,7 @@ echo [7/9] Updating backtest results (open positions, new reports)...
 if errorlevel 1 (
     echo.
     echo [WARN] Backtest update failed. Continuing.
-    echo   [7] 백테스트: 실패^(계속 진행^)>>"%LOGFILE%"
+    echo   [7] 백테스트: 실패-계속진행>>"%LOGFILE%"
 ) else (
     echo   [7] 백테스트: 성공>>"%LOGFILE%"
 )
@@ -100,7 +100,7 @@ echo [8/9] Generating alerts (new CRITICAL / new TOP / interest stocks)...
 if errorlevel 1 (
     echo.
     echo [WARN] Alert generation failed. Continuing.
-    echo   [8] 알림 생성: 실패^(계속 진행^)>>"%LOGFILE%"
+    echo   [8] 알림 생성: 실패-계속진행>>"%LOGFILE%"
 ) else (
     echo   [8] 알림 생성: 성공>>"%LOGFILE%"
 )
