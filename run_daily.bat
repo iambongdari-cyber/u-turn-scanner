@@ -13,7 +13,7 @@ echo.
 
 "%PY%" scripts\run_logger.py start "%LOGFILE%"
 
-echo [1/9] Refreshing stock master (new listings)...
+echo [1/11] Refreshing stock master (new listings)...
 "%PY%" scripts\load_stocks.py --market ALL --stocks-only
 if errorlevel 1 (
     echo.
@@ -24,7 +24,7 @@ if errorlevel 1 (
 )
 echo.
 
-echo [2/9] Updating daily prices (market-cap filtered + gap-fill)...
+echo [2/11] Updating daily prices (market-cap filtered + gap-fill)...
 "%PY%" scripts\load_stocks.py --market ALL --prices-only --gap-fill --min-cap 800 --workers 8 --fast-ticker-index --log-file "%LOGFILE%"
 if errorlevel 1 (
     echo.
@@ -37,7 +37,7 @@ echo   [2] 일봉 갱신: 성공>>"%LOGFILE%"
 if exist "%~dp0logs\_price_cache.pkl" del /q "%~dp0logs\_price_cache.pkl"
 echo.
 
-echo [3/9] Updating market indices...
+echo [3/11] Updating market indices...
 "%PY%" scripts\load_indices.py
 if errorlevel 1 (
     echo.
@@ -49,7 +49,7 @@ if errorlevel 1 (
 echo   [3] 시장 지수: 성공>>"%LOGFILE%"
 echo.
 
-echo [4/9] Updating news risks (DART disclosures, last 30 days)...
+echo [4/11] Updating news risks (DART disclosures, last 30 days)...
 "%PY%" scripts\load_news_risks.py
 if errorlevel 1 (
     echo.
@@ -61,7 +61,7 @@ if errorlevel 1 (
 echo   [4] 뉴스 리스크: 성공>>"%LOGFILE%"
 echo.
 
-echo [5/9] Running DAILY scan...
+echo [5/11] Running DAILY scan...
 "%PY%" scripts\run_scan.py --report-type daily --use-price-cache
 if errorlevel 1 (
     echo.
@@ -73,7 +73,7 @@ if errorlevel 1 (
 echo   [5] 일일 스캔: 성공>>"%LOGFILE%"
 echo.
 
-echo [6/9] Running WEEKLY scan...
+echo [6/11] Running WEEKLY scan...
 "%PY%" scripts\run_scan.py --report-type weekly --use-price-cache
 if errorlevel 1 (
     echo.
@@ -85,31 +85,53 @@ if errorlevel 1 (
 echo   [6] 주간 스캔: 성공>>"%LOGFILE%"
 echo.
 
-echo [7/9] Updating backtest results (open positions, new reports)...
+echo [7/11] scan_dump sidecar...
+"%PY%" scripts\scan_dump.py
+if errorlevel 1 (
+    echo.
+    echo [WARN] scan_dump sidecar failed. Continue to sector_dump.
+    echo   [7] scan_dump sidecar: failed-continue>>"%LOGFILE%"
+) else (
+    echo   [7] scan_dump sidecar: ok>>"%LOGFILE%"
+)
+echo.
+
+echo [8/11] sector_dump sidecar...
+"%PY%" scripts\sector_dump.py
+if errorlevel 1 (
+    echo.
+    echo [WARN] sector_dump sidecar failed. Continue to backtest.
+    echo   [8] sector_dump sidecar: failed-continue>>"%LOGFILE%"
+) else (
+    echo   [8] sector_dump sidecar: ok>>"%LOGFILE%"
+)
+echo.
+
+echo [9/11] Updating backtest results (open positions, new reports)...
 "%PY%" scripts\run_backtest.py
 if errorlevel 1 (
     echo.
     echo [WARN] Backtest update failed. Continuing.
-    echo   [7] 백테스트: 실패-계속진행>>"%LOGFILE%"
+    echo   [9] 백테스트: 실패-계속진행>>"%LOGFILE%"
 ) else (
-    echo   [7] 백테스트: 성공>>"%LOGFILE%"
+    echo   [9] 백테스트: 성공>>"%LOGFILE%"
 )
 echo.
 
-echo [8/9] Generating alerts (new CRITICAL / new TOP / interest stocks)...
+echo [10/11] Generating alerts (new CRITICAL / new TOP / interest stocks)...
 "%PY%" scripts\generate_alerts.py
 if errorlevel 1 (
     echo.
     echo [WARN] Alert generation failed. Continuing.
-    echo   [8] 알림 생성: 실패-계속진행>>"%LOGFILE%"
+    echo   [10] 알림 생성: 실패-계속진행>>"%LOGFILE%"
 ) else (
-    echo   [8] 알림 생성: 성공>>"%LOGFILE%"
+    echo   [10] 알림 생성: 성공>>"%LOGFILE%"
 )
 echo.
 
-echo [9/9] Starting web server and opening browser...
+echo [11/11] Starting web server and opening browser...
 start "U-Turn Web Server" cmd /k "cd /d C:\Users\iambo\dev\u-turn-scanner && npm run dev"
-echo   [9] 웹 서버: 실행 시도>>"%LOGFILE%"
+echo   [11] 웹 서버: 실행 시도>>"%LOGFILE%"
 echo Waiting for server to start...
 timeout /t 12 /nobreak >nul
 start "" http://localhost:3000
@@ -124,6 +146,7 @@ echo  - Daily prices updated (market-cap filtered + gap-fill)
 echo  - Market indices updated
 echo  - News risks refreshed (CRITICAL auto-excluded)
 echo  - Reports updated (daily + weekly)
+echo  - Sidecars generated (logs\sidecar\*.json) [scan_dump + sector_dump]
 echo  - Backtest re-evaluated (open positions)
 echo  - Alerts generated (see alerts.log + /alerts page)
 echo  - Web server running in a separate window
