@@ -65,6 +65,11 @@ export default async function Home() {
         <Link href="/kiwoom-helper" className="text-emerald-700 hover:underline">📋 키움 자동감시 참고표</Link>
         <Link href="/journal" className="text-emerald-700 hover:underline">📝 매매일지 초안</Link>
       </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+        <span className="text-xs text-slate-500">사이드카 분석 (v0.2)</span>
+        <Link href="/bottom-watch" className="text-indigo-700 hover:underline">🌱 바닥 U턴 후보</Link>
+      </div>
     </main>
   );
 }
