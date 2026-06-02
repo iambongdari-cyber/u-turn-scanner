@@ -8,6 +8,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  loadSidecarBundle,
+  stageBadgeClass,
+  classificationBadgeClass,
+  type SidecarTickerContext,
+} from '@/app/_lib/sidecar';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,13 +44,17 @@ function fmt(n: number | null | undefined): string {
 }
 
 export default async function KiwoomHelperPage() {
-  const { data: report } = await supabase
-    .from('reports')
-    .select('id, base_date')
-    .eq('report_type', 'daily')
-    .order('base_date', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [reportRes, sidecar] = await Promise.all([
+    supabase
+      .from('reports')
+      .select('id, base_date')
+      .eq('report_type', 'daily')
+      .order('base_date', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    loadSidecarBundle(),
+  ]);
+  const report = reportRes.data;
 
   if (!report) {
     return (
@@ -56,7 +66,7 @@ export default async function KiwoomHelperPage() {
     );
   }
 
-  const rep = report as any;
+  const rep = report as unknown as { id: string; base_date: string };
 
   const { data, error } = await supabase
     .from('scan_results')
@@ -76,6 +86,26 @@ export default async function KiwoomHelperPage() {
 
   const rows = (data ?? []) as unknown as Row[];
 
+  // 사이드카 컨텍스트가 있는 종목만 모아 하단 "근거" 카드 섹션에서 사용
+  const withCtx: Array<{ row: Row; ctx: SidecarTickerContext }> = [];
+  for (const r of rows) {
+    const ctx = sidecar.contexts.get(r.ticker);
+    if (ctx && (ctx.stage || ctx.classification || ctx.evidence.length > 0 || ctx.chase_risk_reasons.length > 0 || ctx.news_critical)) {
+      withCtx.push({ row: r, ctx });
+    }
+  }
+
+  const sidecarStateNotice =
+    (sidecar.scanMissing && sidecar.sectorMissing) ? (
+      <div className="mb-4 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-500">
+        사이드카 분석 데이터가 아직 없습니다. <code className="rounded bg-slate-200 px-1">scripts/scan_dump.py</code> · <code className="rounded bg-slate-200 px-1">scripts/sector_dump.py</code> 실행 후 일부 라벨이 보강됩니다.
+      </div>
+    ) : (sidecar.scanError || sidecar.sectorError) ? (
+      <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+        사이드카 일부 데이터를 읽지 못했습니다. 화면은 기존 데이터로 정상 표시됩니다.
+      </div>
+    ) : null;
+
   return (
     <main className="container mx-auto max-w-5xl p-6 sm:p-8">
       <header className="mb-4">
@@ -84,11 +114,17 @@ export default async function KiwoomHelperPage() {
         <p className="mt-1 text-sm text-slate-600">최신 일일 리포트({rep.base_date}) 기준</p>
       </header>
 
-      <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+      <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
         이 화면은 키움 자동감시주문에 직접 입력하기 전 <strong>참고용으로 정리한 표</strong>입니다.
         <strong> 자동주문 기능이 아니며</strong>, 최종 입력과 주문 여부는 사용자가 키움에서 직접 확인해야 합니다.
         표시된 모든 가격은 보조 관찰 라벨일 뿐이며, 매매 권유가 아닙니다.
       </div>
+
+      <div className="mb-4 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
+        v0.2 라벨(바닥 관찰 / U턴 시도 / U턴 확인 / 추세전환 후보 · 진짜 주도주 후보 / 후발주 관찰 / 기회 후보 / 추격 위험)은 바닥 U턴 후보와 주도주·후발주 분류를 <strong>함께 참고하기 위한 보조 표시</strong>입니다. 어떤 라벨도 매매 권유가 아닙니다.
+      </div>
+
+      {sidecarStateNotice}
 
       {rows.length === 0 ? (
         <div className="rounded border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
@@ -121,6 +157,7 @@ export default async function KiwoomHelperPage() {
                 if (r.ma60 != null) {
                   chasePrice = Number(r.ma60) * 1.2;
                 }
+                const ctx = sidecar.contexts.get(r.ticker);
                 return (
                   <TableRow key={r.ticker}>
                     <TableCell className="text-center font-medium">{r.rank}</TableCell>
@@ -137,7 +174,24 @@ export default async function KiwoomHelperPage() {
                     <TableCell className="text-right tabular-nums">{fmt(r.stop_loss)}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmt(chasePrice)}</TableCell>
                     <TableCell>
-                      <span className={`inline-flex rounded px-2 py-0.5 text-xs ${m.cls}`}>{m.label}</span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className={`inline-flex rounded px-2 py-0.5 text-xs ${m.cls}`}>{m.label}</span>
+                        {ctx?.stage && (
+                          <span className={`inline-flex rounded px-2 py-0.5 text-xs ${stageBadgeClass(ctx.stage)}`}>
+                            {ctx.stage}
+                          </span>
+                        )}
+                        {ctx?.classification && ctx.classification !== m.label && (
+                          <span className={`inline-flex rounded px-2 py-0.5 text-xs ${classificationBadgeClass(ctx.classification)}`}>
+                            {ctx.classification}
+                          </span>
+                        )}
+                        {ctx?.news_critical && (
+                          <span className="inline-flex rounded bg-red-100 px-2 py-0.5 text-xs text-red-800">
+                            뉴스 위험 확인 필요
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -154,6 +208,76 @@ export default async function KiwoomHelperPage() {
               * 가격은 모두 관찰 보조 라벨이며 매매 권유가 아닙니다. 최종 입력·주문은 사용자가 키움에서 직접 확인합니다.
             </p>
           </div>
+
+          {withCtx.length > 0 && (
+            <section className="mt-6">
+              <h2 className="mb-2 text-base font-semibold text-slate-800">
+                사이드카 보강 컨텍스트
+                <span className="ml-2 text-xs text-slate-500">{withCtx.length}개 종목</span>
+              </h2>
+              <p className="mb-2 text-xs text-slate-500">
+                표의 종목 중 사이드카(`scan_dump`·`sector_dump`)에서 라벨이나 근거가 발견된 종목만 모아 보여줍니다. 관찰·복기 보조 용도이며 매매 권유가 아닙니다.
+              </p>
+              <ul className="space-y-2">
+                {withCtx.map(({ row, ctx }) => (
+                  <li key={row.ticker} className="rounded border border-slate-200 bg-white p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Link href={`/stocks/${row.ticker}`} className="font-medium text-slate-800 hover:underline">
+                        {row.stocks?.name ?? row.ticker}
+                        <span className="ml-2 text-xs text-slate-400">{row.ticker}</span>
+                      </Link>
+                      <div className="flex flex-wrap gap-1">
+                        {ctx.stage && (
+                          <span className={`inline-flex rounded px-2 py-0.5 text-xs ${stageBadgeClass(ctx.stage)}`}>
+                            {ctx.stage}
+                          </span>
+                        )}
+                        {ctx.classification && (
+                          <span className={`inline-flex rounded px-2 py-0.5 text-xs ${classificationBadgeClass(ctx.classification)}`}>
+                            {ctx.classification}
+                          </span>
+                        )}
+                        {ctx.sector && (
+                          <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                            섹터: {ctx.sector}
+                          </span>
+                        )}
+                        {ctx.news_critical && (
+                          <span className="inline-flex rounded bg-red-100 px-2 py-0.5 text-xs text-red-800">
+                            뉴스 위험 확인 필요
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {ctx.evidence.length > 0 && (
+                      <div className="mt-2">
+                        <p className="mb-1 text-xs text-slate-500">확인 근거</p>
+                        <div className="flex flex-wrap gap-1">
+                          {ctx.evidence.map((ev, i) => (
+                            <span key={i} className="inline-flex rounded bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800">
+                              {ev}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {ctx.chase_risk_reasons.length > 0 && (
+                      <div className="mt-2">
+                        <p className="mb-1 text-xs text-slate-500">조심할 점</p>
+                        <div className="flex flex-wrap gap-1">
+                          {ctx.chase_risk_reasons.map((rs, i) => (
+                            <span key={i} className="inline-flex rounded bg-orange-50 px-2 py-0.5 text-[11px] text-orange-800">
+                              {rs}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </>
       )}
     </main>

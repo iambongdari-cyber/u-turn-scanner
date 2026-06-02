@@ -1,5 +1,10 @@
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import {
+  loadSidecarBundle,
+  stageBadgeClass,
+  classificationBadgeClass,
+} from '@/app/_lib/sidecar';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +40,7 @@ function gradeLabel(g: string | null): string {
   return '관찰';
 }
 
-function stagePhrase(daysAgo: number | null | undefined): string {
+function stagePhraseFallback(daysAgo: number | null | undefined): string {
   if (daysAgo == null) return '바닥 관찰';
   if (daysAgo <= 1) return 'U턴 시도';
   if (daysAgo <= 5) return 'U턴 확인';
@@ -57,19 +62,34 @@ export default async function JournalPage() {
   const notes = (notesData ?? []) as unknown as Note[];
 
   const tickers = Array.from(new Set(notes.map(n => n.ticker)));
+  const [scansRes, sidecar] = await Promise.all([
+    tickers.length > 0
+      ? supabase
+          .from('scan_results')
+          .select(`ticker, close, score, final_grade, golden_days_ago, disparity_pct,
+                   buy1_price, buy2_price, stop_loss, one_line,
+                   stocks ( name )`)
+          .in('ticker', tickers)
+          .order('ticker', { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+    loadSidecarBundle(),
+  ]);
+
   const scanByTicker = new Map<string, ScanContext>();
-  if (tickers.length > 0) {
-    const { data: scans } = await supabase
-      .from('scan_results')
-      .select(`ticker, close, score, final_grade, golden_days_ago, disparity_pct,
-               buy1_price, buy2_price, stop_loss, one_line,
-               stocks ( name )`)
-      .in('ticker', tickers)
-      .order('ticker', { ascending: true });
-    for (const s of ((scans ?? []) as unknown as ScanContext[])) {
-      if (!scanByTicker.has(s.ticker)) scanByTicker.set(s.ticker, s);
-    }
+  for (const s of ((scansRes.data ?? []) as unknown as ScanContext[])) {
+    if (!scanByTicker.has(s.ticker)) scanByTicker.set(s.ticker, s);
   }
+
+  const sidecarStateNotice =
+    (sidecar.scanMissing && sidecar.sectorMissing) ? (
+      <div className="mb-4 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-500">
+        사이드카 분석 데이터가 아직 없습니다. <code className="rounded bg-slate-200 px-1">scripts/scan_dump.py</code> · <code className="rounded bg-slate-200 px-1">scripts/sector_dump.py</code> 실행 후 일부 라벨이 보강됩니다.
+      </div>
+    ) : (sidecar.scanError || sidecar.sectorError) ? (
+      <div className="mb-4 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+        사이드카 일부 데이터를 읽지 못했습니다. 일지 초안은 기존 데이터로 정상 표시됩니다.
+      </div>
+    ) : null;
 
   return (
     <main className="container mx-auto max-w-3xl p-6 sm:p-8">
@@ -80,6 +100,8 @@ export default async function JournalPage() {
           관심종목 메모와 스캔 컨텍스트를 묶어 보여줍니다. 관찰·복기 보조용 초안이며 매매 권유가 아닙니다.
         </p>
       </header>
+
+      {sidecarStateNotice}
 
       {notes.length === 0 ? (
         <div className="rounded border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
@@ -93,8 +115,13 @@ export default async function JournalPage() {
         <ul className="space-y-4">
           {notes.map(n => {
             const ctx = scanByTicker.get(n.ticker);
-            const stage = stagePhrase(ctx?.golden_days_ago ?? null);
-            const gLabel = gradeLabel(ctx?.final_grade ?? null);
+            const sc = sidecar.contexts.get(n.ticker);
+            const stage = sc?.stage ?? stagePhraseFallback(ctx?.golden_days_ago ?? null);
+            const gLabel = sc?.classification ?? gradeLabel(ctx?.final_grade ?? null);
+            const evidence = sc?.evidence ?? [];
+            const cautions = sc?.chase_risk_reasons ?? [];
+            const newsCritical = sc?.news_critical ?? false;
+
             return (
               <li key={`${n.report_id}-${n.ticker}`} className="rounded-md border border-slate-300 bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between">
@@ -104,13 +131,23 @@ export default async function JournalPage() {
                   <span className="text-xs text-slate-500">{n.ticker}</span>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">단계: {stage}</span>
-                  <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">분류: {gLabel}</span>
+                  <span className={`inline-flex rounded px-2 py-0.5 ${stageBadgeClass(stage)}`}>
+                    단계: {stage}
+                  </span>
+                  <span className={`inline-flex rounded px-2 py-0.5 ${classificationBadgeClass(gLabel)}`}>
+                    분류: {gLabel}
+                  </span>
+                  {sc?.sector && (
+                    <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-600">섹터: {sc.sector}</span>
+                  )}
                   {n.interest_level && (
                     <span className="rounded bg-blue-100 px-2 py-0.5 text-blue-800">관심도 {n.interest_level}</span>
                   )}
                   {n.my_decision && (
                     <span className="rounded bg-purple-100 px-2 py-0.5 text-purple-800">내 판단 {n.my_decision}</span>
+                  )}
+                  {newsCritical && (
+                    <span className="rounded bg-red-100 px-2 py-0.5 text-red-800">뉴스 위험 확인 필요</span>
                   )}
                 </div>
 
@@ -132,6 +169,55 @@ export default async function JournalPage() {
                       <div>진입 관찰가: {fmtPrice(n.target_buy)}</div>
                       <div>손절 기준: {fmtPrice(n.target_stop)}</div>
                       <div>청산 관찰가: {fmtPrice(n.target_sell)}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 rounded border border-indigo-200 bg-indigo-50 p-3">
+                  <p className="mb-2 text-xs font-semibold text-indigo-800">일지 초안 — 관찰·복기 보조</p>
+                  <div className="space-y-2 text-xs text-slate-700">
+                    <div>
+                      <span className="font-medium text-slate-600">오늘 분류:</span>{' '}
+                      {stage} · {gLabel}
+                      {sc?.sector && <> · {sc.sector}</>}
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-600">확인 근거:</span>{' '}
+                      {evidence.length > 0 ? (
+                        <span className="inline-flex flex-wrap gap-1 align-middle">
+                          {evidence.map((ev, i) => (
+                            <span key={i} className="inline-flex rounded bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800">
+                              {ev}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">사이드카 근거 없음 — 직접 메모로 채워 주세요.</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-600">조심할 점:</span>{' '}
+                      {cautions.length > 0 ? (
+                        <span className="inline-flex flex-wrap gap-1 align-middle">
+                          {cautions.map((c, i) => (
+                            <span key={i} className="inline-flex rounded bg-orange-50 px-2 py-0.5 text-[11px] text-orange-800">
+                              {c}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">
+                          {newsCritical
+                            ? '뉴스 위험 확인 필요 — 공시·뉴스 확인 후 판단.'
+                            : '특이 사항 없음 — 변동성·이격도·거래대금 변화는 계속 관찰.'}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-600">다음 복기 때 볼 것:</span>{' '}
+                      <span className="text-slate-700">
+                        골든크로스 경과·이격도 변화·거래대금 흐름·섹터 강도 유지 여부를 함께 점검합니다.
+                      </span>
                     </div>
                   </div>
                 </div>
