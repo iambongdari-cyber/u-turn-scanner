@@ -57,6 +57,14 @@ export default async function Home() {
           )}
         </Link>
       </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3 text-sm">
+        <span className="text-xs text-slate-500">기회·위험 점검판 (v0.1)</span>
+        <Link href="/market" className="text-emerald-700 hover:underline">🗺 오늘의 시장 지도</Link>
+        <Link href="/opportunities" className="text-emerald-700 hover:underline">🎯 오늘의 기회 포착판</Link>
+        <Link href="/kiwoom-helper" className="text-emerald-700 hover:underline">📋 키움 자동감시 참고표</Link>
+        <Link href="/journal" className="text-emerald-700 hover:underline">📝 매매일지 초안</Link>
+      </div>
     </main>
   );
 }
