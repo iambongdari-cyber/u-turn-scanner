@@ -174,7 +174,10 @@ export default async function JournalPage() {
                 </div>
 
                 <div className="mt-3 rounded border border-indigo-200 bg-indigo-50 p-3">
-                  <p className="mb-2 text-xs font-semibold text-indigo-800">일지 초안 — 관찰·복기 보조</p>
+                  <p className="mb-1 text-xs font-semibold text-indigo-800">일지 초안 — 관찰·복기 보조</p>
+                  <p className="mb-2 text-[11px] text-indigo-700">
+                    이 박스는 사이드카 분석에서 <strong>자동으로 채워지는 초안</strong>입니다. 사용자 본인의 판단·근거는 아래 <strong>자유 메모</strong>에 따로 적어 주세요.
+                  </p>
                   <div className="space-y-2 text-xs text-slate-700">
                     <div>
                       <span className="font-medium text-slate-600">오늘 분류:</span>{' '}

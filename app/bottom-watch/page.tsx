@@ -174,6 +174,10 @@ export default async function BottomWatchPage() {
         ))}
       </section>
 
+      <p className="mb-4 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
+        기본 노출은 거래대금 회복과 U턴 근거가 뚜렷한 종목을 우선으로 보여줍니다. 각 단계별 최대 10개이며, 나머지는 "더 보기"로 펼치세요.
+      </p>
+
       {STAGES.map((s) => (
         <StageSection
           key={s}
@@ -205,9 +209,13 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
   );
 }
 
+const STAGE_DEFAULT_LIMIT = 10;
+
 function StageSection({
   title, items, desc,
 }: { title: string; items: BottomCandidate[]; desc: string }) {
+  const head = items.slice(0, STAGE_DEFAULT_LIMIT);
+  const rest = items.slice(STAGE_DEFAULT_LIMIT);
   return (
     <section className="mb-6">
       <h2 className="mb-1 text-base font-semibold text-slate-800">
@@ -219,11 +227,25 @@ function StageSection({
           해당 단계의 종목이 없습니다.
         </div>
       ) : (
-        <ul className="space-y-2">
-          {items.map((c) => (
-            <CandidateCard key={c.ticker} c={c} />
-          ))}
-        </ul>
+        <>
+          <ul className="space-y-2">
+            {head.map((c) => (
+              <CandidateCard key={c.ticker} c={c} />
+            ))}
+          </ul>
+          {rest.length > 0 && (
+            <details className="mt-2">
+              <summary className="inline-flex cursor-pointer items-center rounded bg-slate-100 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-200">
+                나머지 {rest.length}개 더 보기
+              </summary>
+              <ul className="mt-2 space-y-2">
+                {rest.map((c) => (
+                  <CandidateCard key={c.ticker} c={c} />
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
       )}
     </section>
   );

@@ -163,6 +163,12 @@ export default async function LeadersPage() {
         </div>
       </header>
 
+      <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+        🥇 <strong>진짜 주도주 후보</strong>는 돈의 흐름과 가격 위치를 함께 본 분류입니다.
+        <strong> 매수 권유가 아니며</strong>, 가격 진입 여부는 사용자 본인이 <strong>추격 위험</strong>과 함께 판단해야 합니다.
+        기본 노출은 거래대금·전고점 근접도·상대강도 기준 상위 종목 위주이며, 나머지는 "더 보기"로 펼치세요.
+      </div>
+
       <section className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <SummaryCard label="강한 섹터" value={summary.n_sectors_strong ?? strong.length} />
         <SummaryCard label="약한 섹터" value={summary.n_sectors_weak ?? weak.length} />
@@ -301,9 +307,13 @@ function SectorCard({ block }: { block: SectorBlock }) {
   );
 }
 
+const SECTOR_MEMBER_LIMIT = 5;
+
 function SubSection({ label, items }: { label: string; items: SectorMember[] }) {
   const meta = LABEL_META[label] ?? { icon: '·', cls: 'bg-slate-100 text-slate-700' };
   const desc = SECTION_DESC[label] ?? '';
+  const head = items.slice(0, SECTOR_MEMBER_LIMIT);
+  const rest = items.slice(SECTOR_MEMBER_LIMIT);
   return (
     <section>
       <div className="mb-1 flex items-baseline gap-2">
@@ -318,9 +328,21 @@ function SubSection({ label, items }: { label: string; items: SectorMember[] }) 
           이 분류에 해당하는 종목이 없습니다.
         </div>
       ) : (
-        <ul className="space-y-1.5">
-          {items.map((m) => <MemberRow key={m.ticker} m={m} />)}
-        </ul>
+        <>
+          <ul className="space-y-1.5">
+            {head.map((m) => <MemberRow key={m.ticker} m={m} />)}
+          </ul>
+          {rest.length > 0 && (
+            <details className="mt-1.5">
+              <summary className="inline-flex cursor-pointer items-center rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 hover:bg-slate-200">
+                나머지 {rest.length}개 더 보기
+              </summary>
+              <ul className="mt-1.5 space-y-1.5">
+                {rest.map((m) => <MemberRow key={m.ticker} m={m} />)}
+              </ul>
+            </details>
+          )}
+        </>
       )}
     </section>
   );
