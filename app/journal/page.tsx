@@ -4,6 +4,7 @@ import {
   loadSidecarBundle,
   stageBadgeClass,
   classificationBadgeClass,
+  buildJournalDraft,
 } from '@/app/_lib/sidecar';
 
 export const dynamic = 'force-dynamic';
@@ -122,6 +123,18 @@ export default async function JournalPage() {
             const cautions = sc?.chase_risk_reasons ?? [];
             const newsCritical = sc?.news_critical ?? false;
 
+            // v0.3-3: 일지 초안 4섹션 보강 — 왜 떴는지 / 조심할 점 / 내일 다시 볼 조건 / 추격하지 말아야 할 이유
+            const draft = buildJournalDraft({
+              stage: sc?.stage ?? null,
+              classification: sc?.classification ?? null,
+              sector: sc?.sector ?? null,
+              evidence,
+              chase_risk_reasons: cautions,
+              news_critical: newsCritical,
+              disparity_pct: ctx?.disparity_pct ?? null,
+              golden_days_ago: ctx?.golden_days_ago ?? null,
+            });
+
             return (
               <li key={`${n.report_id}-${n.ticker}`} className="rounded-md border border-slate-300 bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between">
@@ -179,49 +192,52 @@ export default async function JournalPage() {
                     이 박스는 사이드카 분석에서 <strong>자동으로 채워지는 초안</strong>입니다. 사용자 본인의 판단·근거는 아래 <strong>자유 메모</strong>에 따로 적어 주세요.
                   </p>
                   <div className="space-y-2 text-xs text-slate-700">
-                    <div>
-                      <span className="font-medium text-slate-600">오늘 분류:</span>{' '}
-                      {stage} · {gLabel}
-                      {sc?.sector && <> · {sc.sector}</>}
-                    </div>
-                    <div>
-                      <span className="font-medium text-slate-600">확인 근거:</span>{' '}
-                      {evidence.length > 0 ? (
-                        <span className="inline-flex flex-wrap gap-1 align-middle">
+                    {/* ① 왜 떴는지 */}
+                    <div className="rounded border border-emerald-200 bg-emerald-50 p-2">
+                      <p className="mb-1 text-[11px] font-semibold text-emerald-800">① 왜 떴는지</p>
+                      <p className="text-slate-700">{draft.why}</p>
+                      {evidence.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
                           {evidence.map((ev, i) => (
-                            <span key={i} className="inline-flex rounded bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-800">
+                            <span key={i} className="inline-flex rounded bg-white px-2 py-0.5 text-[10px] text-emerald-800 ring-1 ring-emerald-200">
                               {ev}
                             </span>
                           ))}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">사이드카 근거 없음 — 직접 메모로 채워 주세요.</span>
+                        </div>
                       )}
                     </div>
-                    <div>
-                      <span className="font-medium text-slate-600">조심할 점:</span>{' '}
-                      {cautions.length > 0 ? (
-                        <span className="inline-flex flex-wrap gap-1 align-middle">
+
+                    {/* ② 조심할 점 */}
+                    <div className="rounded border border-amber-200 bg-amber-50 p-2">
+                      <p className="mb-1 text-[11px] font-semibold text-amber-800">② 조심할 점</p>
+                      <p className="text-slate-700">{draft.caution}</p>
+                      {cautions.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
                           {cautions.map((c, i) => (
-                            <span key={i} className="inline-flex rounded bg-orange-50 px-2 py-0.5 text-[11px] text-orange-800">
+                            <span key={i} className="inline-flex rounded bg-white px-2 py-0.5 text-[10px] text-orange-800 ring-1 ring-orange-200">
                               {c}
                             </span>
                           ))}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">
-                          {newsCritical
-                            ? '뉴스 위험 확인 필요 — 공시·뉴스 확인 후 판단.'
-                            : '특이 사항 없음 — 변동성·이격도·거래대금 변화는 계속 관찰.'}
-                        </span>
+                        </div>
                       )}
                     </div>
-                    <div>
-                      <span className="font-medium text-slate-600">다음 복기 때 볼 것:</span>{' '}
-                      <span className="text-slate-700">
-                        골든크로스 경과·이격도 변화·거래대금 흐름·섹터 강도 유지 여부를 함께 점검합니다.
-                      </span>
+
+                    {/* ③ 내일 다시 볼 조건 */}
+                    <div className="rounded border border-sky-200 bg-sky-50 p-2">
+                      <p className="mb-1 text-[11px] font-semibold text-sky-800">③ 내일 다시 볼 조건</p>
+                      <p className="text-slate-700">{draft.next}</p>
                     </div>
+
+                    {/* ④ 추격하지 말아야 할 이유 — 해당 시만 */}
+                    {draft.noChase && (
+                      <div className="rounded border border-orange-300 bg-orange-50 p-2 ring-1 ring-orange-200">
+                        <p className="mb-1 text-[11px] font-semibold text-orange-900">⚠️ ④ 추격하지 말아야 할 이유</p>
+                        <p className="text-slate-700">{draft.noChase}</p>
+                        <p className="mt-1 text-[10px] text-orange-700">
+                          이 표시는 신규 진입 위험을 경고하는 라벨이며, <strong>매수/매도 지시가 아닙니다</strong>.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
 

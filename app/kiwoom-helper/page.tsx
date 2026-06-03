@@ -12,6 +12,10 @@ import {
   loadSidecarBundle,
   stageBadgeClass,
   classificationBadgeClass,
+  getStageDisplay,
+  getClassificationDisplay,
+  STAGE_ORDER,
+  CLASSIFICATION_ORDER,
   type SidecarTickerContext,
 } from '@/app/_lib/sidecar';
 
@@ -115,14 +119,51 @@ export default async function KiwoomHelperPage() {
       </header>
 
       <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-        이 화면은 키움 자동감시주문에 직접 입력하기 전 <strong>참고용으로 정리한 표</strong>입니다.
-        <strong> 자동주문 기능이 아니며</strong>, 최종 입력과 주문 여부는 사용자가 키움에서 직접 확인해야 합니다.
-        표시된 모든 가격은 보조 관찰 라벨일 뿐이며, 매매 권유가 아닙니다.
+        이 화면은 키움의 <strong>자동감시·관심종목 등록</strong> 시 손으로 입력할 가격을 <strong>참고용으로 정리한 표</strong>입니다.
+        <strong> 자동주문/자동매수 기능과 무관</strong>하며, 키움 API 연동도 없습니다.
+        최종 입력과 주문 여부는 사용자가 <strong>키움 HTS/MTS에서 직접 확인하고 결정</strong>합니다.
+        표시된 모든 가격·라벨은 보조 관찰 표기일 뿐이며, 매매 권유가 아닙니다.
       </div>
 
-      <div className="mb-4 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
-        v0.2 라벨(바닥 관찰 / U턴 시도 / U턴 확인 / 추세전환 후보 · 진짜 주도주 후보 / 후발주 관찰 / 기회 후보 / 추격 위험)은 바닥 U턴 후보와 주도주·후발주 분류를 <strong>함께 참고하기 위한 보조 표시</strong>입니다. 어떤 라벨도 매매 권유가 아닙니다.
-      </div>
+      {/* v0.3-3: 8라벨 의미 빠른 참조표 */}
+      <details className="mb-3 rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
+        <summary className="cursor-pointer text-slate-700">
+          <strong>라벨 의미 빠른 참조</strong> — 단계 4개 · 분류 4개 (펼치기)
+        </summary>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <div>
+            <p className="mb-1 text-[11px] font-medium text-slate-500">단계 (바닥→추세)</p>
+            <ul className="space-y-1">
+              {STAGE_ORDER.map((s) => {
+                const d = getStageDisplay(s);
+                return (
+                  <li key={s} className="flex items-start gap-1">
+                    <span className={`inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] ${stageBadgeClass(s)}`}>{d.icon} {s}</span>
+                    <span className="text-[11px] text-slate-600">— {d.short}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          <div>
+            <p className="mb-1 text-[11px] font-medium text-slate-500">분류 (섹터 안에서 위치)</p>
+            <ul className="space-y-1">
+              {CLASSIFICATION_ORDER.map((c) => {
+                const d = getClassificationDisplay(c);
+                return (
+                  <li key={c} className="flex items-start gap-1">
+                    <span className={`inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] ${classificationBadgeClass(c)}`}>{d.icon} {c}</span>
+                    <span className="text-[11px] text-slate-600">— {d.short}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </div>
+        <p className="mt-2 text-[11px] text-slate-500">
+          어떤 라벨도 매매 권유가 아닙니다. 진입·청산 가격은 사용자가 본인의 원칙에 따라 직접 결정합니다.
+        </p>
+      </details>
 
       {sidecarStateNotice}
 

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { getStageDisplay, stageBadgeClass } from '@/app/_lib/sidecar';
 
 export const dynamic = 'force-dynamic';
 
@@ -184,6 +185,7 @@ export default async function BottomWatchPage() {
           title={`${STAGE_ICON[s] ?? ''} ${s}`}
           items={groups.get(s) ?? []}
           desc={STAGE_DESC[s] ?? ''}
+          stageKey={s}
         />
       ))}
 
@@ -212,16 +214,28 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
 const STAGE_DEFAULT_LIMIT = 10;
 
 function StageSection({
-  title, items, desc,
-}: { title: string; items: BottomCandidate[]; desc: string }) {
+  title, items, desc, stageKey,
+}: { title: string; items: BottomCandidate[]; desc: string; stageKey: string }) {
   const head = items.slice(0, STAGE_DEFAULT_LIMIT);
   const rest = items.slice(STAGE_DEFAULT_LIMIT);
+  const sd = getStageDisplay(stageKey);
   return (
     <section className="mb-6">
-      <h2 className="mb-1 text-base font-semibold text-slate-800">
-        {title} <span className="ml-2 text-xs text-slate-500">{items.length}개</span>
+      <h2 className="mb-1 flex flex-wrap items-baseline gap-2 text-base font-semibold text-slate-800">
+        <span className={`inline-flex rounded px-2 py-0.5 text-sm ${stageBadgeClass(stageKey)}`}>
+          {title}
+        </span>
+        <span className="text-xs text-slate-500">{items.length}개</span>
+        {sd.short && (
+          <span className="text-xs font-normal text-slate-500">— {sd.short}</span>
+        )}
       </h2>
-      {desc && <p className="mb-2 text-xs text-slate-500">{desc}</p>}
+      {desc && <p className="mb-1 text-xs text-slate-500">{desc}</p>}
+      {sd.caution && (
+        <p className="mb-2 text-[11px] text-slate-500">
+          <span className="font-medium text-slate-600">다음 확인:</span> {sd.caution}
+        </p>
+      )}
       {items.length === 0 ? (
         <div className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
           해당 단계의 종목이 없습니다.
@@ -253,6 +267,7 @@ function StageSection({
 
 function CandidateCard({ c }: { c: BottomCandidate }) {
   const gLab = gradeLabel(c.final_grade_from_run_scan);
+  const sd = c.stage ? getStageDisplay(c.stage) : null;
   return (
     <li className="rounded border border-slate-200 bg-white p-3 shadow-sm">
       <div className="flex items-center justify-between gap-2">
@@ -262,7 +277,11 @@ function CandidateCard({ c }: { c: BottomCandidate }) {
         </Link>
         <div className="flex flex-wrap gap-1">
           {c.stage && (
-            <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
+            <span
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${stageBadgeClass(c.stage)}`}
+              title={sd?.desc ?? ''}
+            >
+              {sd?.icon ? <span>{sd.icon}</span> : null}
               {c.stage}
             </span>
           )}
@@ -276,6 +295,12 @@ function CandidateCard({ c }: { c: BottomCandidate }) {
           )}
         </div>
       </div>
+
+      {sd?.short && (
+        <div className="mt-1 text-[11px] text-slate-500">
+          {sd.icon} {c.stage} — {sd.short}
+        </div>
+      )}
 
       {c.sector && (
         <div className="mt-1 text-xs text-slate-500">섹터: {c.sector}</div>

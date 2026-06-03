@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { readFile } from 'fs/promises';
 import path from 'path';
+import { getClassificationDisplay } from '@/app/_lib/sidecar';
 
 export const dynamic = 'force-dynamic';
 
@@ -138,6 +139,15 @@ export default async function LeadersPage() {
   const weak: SectorBlock[] = d.sectors_weak ?? [];
   const summary = d.summary ?? {};
 
+  // 전체 섹터(강+약) 합산 4분류 통합 카운트 — 상단 요약용
+  const allBlocks = [...strong, ...weak];
+  const totals = {
+    leaders: allBlocks.reduce((s, b) => s + (b.leaders?.length ?? 0), 0),
+    followers: allBlocks.reduce((s, b) => s + (b.followers?.length ?? 0), 0),
+    opportunities: allBlocks.reduce((s, b) => s + (b.opportunities?.length ?? 0), 0),
+    chase_risk: allBlocks.reduce((s, b) => s + (b.chase_risk?.length ?? 0), 0),
+  };
+
   const flow = d.market_flow ?? '중립 흐름';
   const flowCls =
     flow === '강세 흐름' ? 'bg-green-100 text-green-800' :
@@ -169,7 +179,7 @@ export default async function LeadersPage() {
         기본 노출은 거래대금·전고점 근접도·상대강도 기준 상위 종목 위주이며, 나머지는 "더 보기"로 펼치세요.
       </div>
 
-      <section className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <section className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <SummaryCard label="강한 섹터" value={summary.n_sectors_strong ?? strong.length} />
         <SummaryCard label="약한 섹터" value={summary.n_sectors_weak ?? weak.length} />
         <SummaryCard label="전체 산출 종목" value={summary.n_stocks_with_metrics ?? 0} />
@@ -179,6 +189,52 @@ export default async function LeadersPage() {
             <span className={`inline-flex rounded px-2 py-0.5 text-sm ${flowCls}`}>{flow}</span>
           </div>
         </div>
+      </section>
+
+      {/* v0.3-3: 4분류 통합 요약 — 추격 위험은 경고 톤으로 강조 */}
+      <section className="mb-6 rounded-md border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="mb-2 text-xs font-medium text-slate-600">
+          전 섹터 합산 라벨 요약
+          <span className="ml-1 text-[11px] font-normal text-slate-400">— 관찰·복기 보조용 카운트이며 매매 권유가 아닙니다</span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <TotalCountCard
+            label="진짜 주도주 후보"
+            value={totals.leaders}
+            cls="bg-amber-100 text-amber-900"
+            icon="🥇"
+            hint={getClassificationDisplay('진짜 주도주 후보').short}
+          />
+          <TotalCountCard
+            label="후발주 관찰"
+            value={totals.followers}
+            cls="bg-sky-100 text-sky-800"
+            icon="🥈"
+            hint={getClassificationDisplay('후발주 관찰').short}
+          />
+          <TotalCountCard
+            label="기회 후보"
+            value={totals.opportunities}
+            cls="bg-emerald-100 text-emerald-800"
+            icon="🎯"
+            hint={getClassificationDisplay('기회 후보').short}
+          />
+          <TotalCountCard
+            label="추격 위험"
+            value={totals.chase_risk}
+            cls="bg-orange-100 text-orange-900 ring-2 ring-orange-300"
+            icon="⚠️"
+            hint="신규 진입 위험 — 매수/매도 지시 아님"
+            warn
+          />
+        </div>
+        {totals.chase_risk > 0 && (
+          <p className="mt-2 rounded border border-orange-200 bg-orange-50 p-2 text-[11px] text-orange-900">
+            ⚠️ <strong>추격 위험 {totals.chase_risk}개</strong> 종목이 표시되어 있습니다.
+            이격이 +20% 이상 벌어진 영역으로, <strong>신규 진입 시 추격 위험이 큽니다</strong>.
+            이는 <strong>매수/매도 지시가 아닌 경고 라벨</strong>이며, 보유 중일 때의 대응은 본인의 원칙을 따르세요.
+          </p>
+        )}
       </section>
 
       <section className="mb-8">
@@ -249,6 +305,25 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
   );
 }
 
+function TotalCountCard({
+  label, value, cls, icon, hint, warn,
+}: { label: string; value: number; cls: string; icon: string; hint?: string; warn?: boolean }) {
+  return (
+    <div className={`rounded border p-2 ${warn ? 'border-orange-300 bg-orange-50' : 'border-slate-200 bg-slate-50'}`}>
+      <div className="flex items-center justify-between">
+        <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${cls}`}>
+          <span>{icon}</span>
+          {label}
+        </span>
+        <span className={`text-lg font-semibold tabular-nums ${warn ? 'text-orange-900' : 'text-slate-800'}`}>{value}</span>
+      </div>
+      {hint && (
+        <div className={`mt-1 text-[11px] ${warn ? 'text-orange-700' : 'text-slate-500'}`}>{hint}</div>
+      )}
+    </div>
+  );
+}
+
 function SectorCard({ block }: { block: SectorBlock }) {
   const sections: Array<{ key: keyof Pick<SectorBlock, 'leaders' | 'followers' | 'opportunities' | 'chase_risk'>; label: string }> = [
     { key: 'leaders', label: '진짜 주도주 후보' },
@@ -314,15 +389,32 @@ function SubSection({ label, items }: { label: string; items: SectorMember[] }) 
   const desc = SECTION_DESC[label] ?? '';
   const head = items.slice(0, SECTOR_MEMBER_LIMIT);
   const rest = items.slice(SECTOR_MEMBER_LIMIT);
+  const display = getClassificationDisplay(label);
+  const isChaseRisk = label === '추격 위험';
+  const wrapCls = isChaseRisk && items.length > 0
+    ? 'rounded border border-orange-200 bg-orange-50 p-2'
+    : '';
   return (
-    <section>
-      <div className="mb-1 flex items-baseline gap-2">
-        <span className={`inline-flex rounded px-2 py-0.5 text-xs ${meta.cls}`}>
+    <section className={wrapCls}>
+      <div className="mb-1 flex flex-wrap items-baseline gap-2">
+        <span
+          className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${meta.cls} ${isChaseRisk && items.length > 0 ? 'ring-1 ring-orange-300' : ''}`}
+        >
           {meta.icon} {label}
         </span>
         <span className="text-xs text-slate-500">{items.length}개</span>
+        {display.short && (
+          <span className={`text-[11px] ${isChaseRisk ? 'text-orange-700' : 'text-slate-500'}`}>
+            — {display.short}
+          </span>
+        )}
       </div>
       {desc && <p className="mb-1 text-xs text-slate-500">{desc}</p>}
+      {isChaseRisk && items.length > 0 && (
+        <p className="mb-1 text-[11px] font-medium text-orange-800">
+          ⚠️ 이 영역의 신규 진입은 추격 위험이 큽니다. 매수/매도 지시가 아닌 경고 라벨입니다.
+        </p>
+      )}
       {items.length === 0 ? (
         <div className="rounded border border-slate-200 bg-slate-50 p-2 text-xs text-slate-500">
           이 분류에 해당하는 종목이 없습니다.
