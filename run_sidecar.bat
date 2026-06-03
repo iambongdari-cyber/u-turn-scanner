@@ -23,8 +23,9 @@ if not exist "logs\sidecar" mkdir "logs\sidecar"
 set "PY=.venv\Scripts\python.exe"
 set "SCAN_STATE=not-run"
 set "SECTOR_STATE=not-run"
+set "ARCHIVE_STATE=not-run"
 
-echo [1/2] scan_dump.py
+echo [1/3] scan_dump.py
 "%PY%" scripts\scan_dump.py
 if errorlevel 1 (
     echo.
@@ -35,14 +36,25 @@ if errorlevel 1 (
 )
 echo.
 
-echo [2/2] sector_dump.py
+echo [2/3] sector_dump.py
 "%PY%" scripts\sector_dump.py
 if errorlevel 1 (
     echo.
-    echo [WARN] sector_dump.py failed. Continue to final file check.
+    echo [WARN] sector_dump.py failed. Continue to archive_sidecar.py.
     set "SECTOR_STATE=failed-continue"
 ) else (
     set "SECTOR_STATE=ok"
+)
+echo.
+
+echo [3/3] archive_sidecar.py
+"%PY%" scripts\archive_sidecar.py
+if errorlevel 1 (
+    echo.
+    echo [WARN] archive_sidecar.py failed. Continue to final file check.
+    set "ARCHIVE_STATE=failed-continue"
+) else (
+    set "ARCHIVE_STATE=ok"
 )
 echo.
 
@@ -63,9 +75,10 @@ echo.
 
 echo ============================================
 echo  Done: %date% %time%
-echo  - scan_dump   : %SCAN_STATE%
-echo  - sector_dump : %SECTOR_STATE%
-echo  - Output dir  : logs\sidecar\
+echo  - scan_dump       : %SCAN_STATE%
+echo  - sector_dump     : %SECTOR_STATE%
+echo  - archive_sidecar : %ARCHIVE_STATE%
+echo  - Output dir      : logs\sidecar\ (daily snapshots in logs\sidecar\daily\)
 echo ============================================
 echo.
 echo This batch is independent of run_daily.bat.
