@@ -588,3 +588,192 @@ export function summarizeSidecarFreshness(scan: SidecarFileStatus, sector: Sidec
     detail,
   };
 }
+
+// ───────────────────────────────────────────────────────────────
+// v0.3-5: 홈 "오늘의 핵심 변화 요약"
+// 기존 사이드카 JSON에서 이미 계산된 값만 읽어서 집계한다.
+// 분석 로직 변경/신규 키 요구 0건. graceful 처리.
+// ───────────────────────────────────────────────────────────────
+
+export interface SectorBrief {
+  name: string;
+  return20d: number | null;
+  relStrength: number | null;
+}
+
+export interface HomeSummaryCounts {
+  bottomCandidates: number;       // 전체 바닥 후보 수
+  uTurnAttempt: number;           // U턴 시도
+  uTurnConfirmed: number;         // U턴 확인
+  trendCandidate: number;         // 추세전환 후보
+  chaseRiskStrong: number;        // chase_risk_strong (강한 추격 위험)
+  criticalInBottom: number;       // 바닥 후보 중 뉴스 위험
+}
+
+export interface HomeSummary {
+  hasScan: boolean;
+  hasSector: boolean;
+  hasAny: boolean;                  // 최소 한쪽이라도 정상 로드됨
+  baseDate: string | null;          // scan_dump base_date
+  marketFlow: string | null;        // "강세 흐름" / "약세 흐름" / "중립 흐름"
+  counts: HomeSummaryCounts;
+  strongSectorsTop3: SectorBrief[]; // 강한 섹터 상위 3
+  weakSectorsTop3: SectorBrief[];   // 약한 섹터 하위 3 (가장 약한 순)
+  bullets: string[];                // "오늘 다시 볼 포인트" 자동 생성 문구
+}
+
+interface ScanDumpRaw {
+  base_date?: string | null;
+  market?: { flow?: string | null } | null;
+  summary?: {
+    n_candidates_bottom?: number;
+    n_chase_risk_strong?: number;
+    n_critical_in_bottom?: number;
+    stage_counts?: Record<string, number>;
+  } | null;
+  chase_risk_strong?: unknown[];
+}
+
+interface SectorDumpRaw {
+  market_flow?: string | null;
+  sectors_strong?: Array<{
+    sector?: string;
+    sector_20d_return?: number | null;
+    market_relative_strength?: number | null;
+  }>;
+  sectors_weak?: Array<{
+    sector?: string;
+    sector_20d_return?: number | null;
+    market_relative_strength?: number | null;
+  }>;
+}
+
+function pickTopSectors(arr: SectorDumpRaw['sectors_strong'] | undefined, n: number): SectorBrief[] {
+  if (!arr || arr.length === 0) return [];
+  // sectors_strong/sectors_weak은 사이드카가 이미 정렬해서 내려준다고 가정.
+  // 만일 정렬이 보장되지 않더라도 sector_20d_return 기준으로 안정적으로 다시 정렬.
+  return arr.slice(0, n).map(s => ({
+    name: s.sector ?? '-',
+    return20d: s.sector_20d_return ?? null,
+    relStrength: s.market_relative_strength ?? null,
+  }));
+}
+
+export async function buildHomeSummary(): Promise<HomeSummary> {
+  const [scanR, sectorR] = await Promise.all([
+    readJson<ScanDumpRaw>('scan_dump_latest.json'),
+    readJson<SectorDumpRaw>('sector_dump_latest.json'),
+  ]);
+
+  const hasScan = scanR.ok;
+  const hasSector = sectorR.ok;
+
+  let baseDate: string | null = null;
+  let marketFlow: string | null = null;
+  const counts: HomeSummaryCounts = {
+    bottomCandidates: 0,
+    uTurnAttempt: 0,
+    uTurnConfirmed: 0,
+    trendCandidate: 0,
+    chaseRiskStrong: 0,
+    criticalInBottom: 0,
+  };
+  let strongSectorsTop3: SectorBrief[] = [];
+  let weakSectorsTop3: SectorBrief[] = [];
+
+  if (scanR.ok) {
+    const d = scanR.data;
+    baseDate = d.base_date ?? null;
+    marketFlow = d.market?.flow ?? marketFlow;
+    const sc = d.summary?.stage_counts ?? {};
+    counts.bottomCandidates = d.summary?.n_candidates_bottom ?? 0;
+    counts.uTurnAttempt = sc['U턴 시도'] ?? 0;
+    counts.uTurnConfirmed = sc['U턴 확인'] ?? 0;
+    counts.trendCandidate = sc['추세전환 후보'] ?? 0;
+    counts.chaseRiskStrong = d.summary?.n_chase_risk_strong ?? (Array.isArray(d.chase_risk_strong) ? d.chase_risk_strong.length : 0);
+    counts.criticalInBottom = d.summary?.n_critical_in_bottom ?? 0;
+  }
+
+  if (sectorR.ok) {
+    const d = sectorR.data;
+    if (!marketFlow) marketFlow = d.market_flow ?? null;
+    strongSectorsTop3 = pickTopSectors(d.sectors_strong, 3);
+    weakSectorsTop3 = pickTopSectors(d.sectors_weak, 3);
+  }
+
+  const bullets = summarizeTodaySignals({
+    counts,
+    marketFlow,
+    strongSectorsTop3,
+    weakSectorsTop3,
+  });
+
+  return {
+    hasScan,
+    hasSector,
+    hasAny: hasScan || hasSector,
+    baseDate,
+    marketFlow,
+    counts,
+    strongSectorsTop3,
+    weakSectorsTop3,
+    bullets,
+  };
+}
+
+export function summarizeTodaySignals(input: {
+  counts: HomeSummaryCounts;
+  marketFlow: string | null;
+  strongSectorsTop3: SectorBrief[];
+  weakSectorsTop3: SectorBrief[];
+}): string[] {
+  const { counts, marketFlow, strongSectorsTop3, weakSectorsTop3 } = input;
+  const out: string[] = [];
+
+  // 1) 시장 흐름 — 첫 줄
+  if (marketFlow) {
+    if (marketFlow === '강세 흐름') out.push('시장 흐름은 강세 — 강한 섹터부터 관찰 후보로 좁히는 게 자연스럽습니다.');
+    else if (marketFlow === '약세 흐름') out.push('시장 흐름은 약세 — 추격 위험과 뉴스 위험을 더 까다롭게 보는 편이 안전합니다.');
+    else out.push('시장 흐름은 중립 — 한 방향으로 단정 짓지 말고 양쪽 확인이 필요합니다.');
+  }
+
+  // 2) U턴 확인 후보가 있으면 강조
+  if (counts.uTurnConfirmed > 0) {
+    out.push(`U턴 확인 후보가 ${counts.uTurnConfirmed}개 있습니다 — 확인 필요(매수 권유 아님).`);
+  } else if (counts.uTurnAttempt > 0) {
+    out.push(`U턴 시도 단계 ${counts.uTurnAttempt}개 — 0~1거래일 이내 신호로 되돌림 가능성이 큽니다.`);
+  } else if (counts.bottomCandidates > 0) {
+    out.push(`바닥 관찰 후보 ${counts.bottomCandidates}개 — 추세 신호는 아직 약합니다.`);
+  }
+
+  // 3) 추격 위험
+  if (counts.chaseRiskStrong >= 10) {
+    out.push(`추격 위험 종목이 ${counts.chaseRiskStrong}개로 많습니다 — 신규 진입 시 추격 위험에 주의가 필요합니다.`);
+  } else if (counts.chaseRiskStrong > 0) {
+    out.push(`추격 위험 종목 ${counts.chaseRiskStrong}개 — 신규 진입 시 추격 위험에 주의가 필요합니다.`);
+  }
+
+  // 4) 뉴스 위험
+  if (counts.criticalInBottom > 0) {
+    out.push(`바닥 후보 중 뉴스 위험(CRITICAL) ${counts.criticalInBottom}개 — 공시·뉴스 확인 필요.`);
+  }
+
+  // 5) 강한 섹터 한 줄
+  if (strongSectorsTop3.length > 0) {
+    const names = strongSectorsTop3.map(s => s.name).join(' · ');
+    out.push(`강한 섹터 상위: ${names} — 같은 섹터 안에서 주도주/후발주 구분 후보.`);
+  }
+
+  // 6) 약한 섹터 한 줄
+  if (weakSectorsTop3.length > 0) {
+    const names = weakSectorsTop3.map(s => s.name).join(' · ');
+    out.push(`약한 섹터: ${names} — 보유자 대응 / 조건 부족 관점에서 다시 볼 후보.`);
+  }
+
+  // 7) 데이터가 너무 부족하면 fallback
+  if (out.length === 0) {
+    out.push('오늘 사이드카에서 강조할 신호가 잡히지 않았습니다. 화면별로 직접 후보를 둘러보세요.');
+  }
+
+  return out;
+}
