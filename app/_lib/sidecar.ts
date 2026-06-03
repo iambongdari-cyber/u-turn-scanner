@@ -3,7 +3,7 @@
 // - 파일 없음/파싱 실패 모두 graceful 처리. 화면이 절대 깨지지 않도록 모든 분기 try/catch.
 // - 서버 컴포넌트 전용(fs 사용). 클라이언트에서 import 시 빌드 시점에 알아서 막힘.
 
-import { readFile } from 'fs/promises';
+import { readFile, stat } from 'fs/promises';
 import path from 'path';
 
 export interface SidecarTickerContext {
@@ -357,4 +357,234 @@ export function buildJournalDraft(input: JournalDraftInput): JournalDraft {
   }
 
   return { why, caution, next, noChase };
+}
+
+// ───────────────────────────────────────────────────────────────
+// v0.3-4: 사이드카 파일 최신 상태 안내
+// 화면이 "오늘 데이터인지 / 누락인지 / 오래된지" 한눈에 보여줄 수 있도록
+// 파일 존재·mtime·신선도(stale)·상태 메시지를 정리한다.
+// 분석 결과가 아니라 데이터 상태 안내용. JSON 내부 키 요구 0건.
+// ───────────────────────────────────────────────────────────────
+
+export type SidecarKind = 'scan' | 'sector';
+
+export interface SidecarFileStatus {
+  kind: SidecarKind;
+  fileName: string;
+  pathLabel: string;          // 화면 노출용 짧은 경로
+  exists: boolean;
+  modifiedAtIso: string | null;     // 한국 시간 ISO 표시(분 단위)
+  modifiedDateKst: string | null;   // YYYY-MM-DD (KST)
+  todayKst: string;                 // YYYY-MM-DD (KST) 기준 오늘
+  ageHours: number | null;          // 현재 시각 대비 경과 시간(시간 단위, 소수 1)
+  isToday: boolean;
+  isStale: boolean;                 // 오늘이 아니거나 24시간 이상 경과
+  parseError: boolean;
+  status: 'ok' | 'missing' | 'stale' | 'error';
+  message: string;                  // 화면 노출용 한 줄 안내
+}
+
+const SIDECAR_FILES: Record<SidecarKind, string> = {
+  scan: 'scan_dump_latest.json',
+  sector: 'sector_dump_latest.json',
+};
+
+const KST_OFFSET_MIN = 9 * 60;
+// 오늘 데이터가 아니어도 24시간 이내면 "최신성 경계"로만 본다.
+const STALE_HOURS = 24;
+
+function toKstDateString(d: Date): string {
+  // d.getTime() 은 UTC ms. KST = UTC+9
+  const k = new Date(d.getTime() + KST_OFFSET_MIN * 60 * 1000);
+  // toISOString은 UTC로 출력하므로, KST로 보정한 Date의 UTC 표현 = KST의 ISO 표현
+  return k.toISOString().slice(0, 10);
+}
+
+function toKstIsoMinutes(d: Date): string {
+  const k = new Date(d.getTime() + KST_OFFSET_MIN * 60 * 1000);
+  // 'YYYY-MM-DD HH:mm KST' 형식 (분 단위)
+  const iso = k.toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} KST`;
+}
+
+export function formatSidecarTime(d: Date | null | undefined): string {
+  if (!d) return '-';
+  return toKstIsoMinutes(d);
+}
+
+async function readOneSidecarStatus(kind: SidecarKind, now: Date): Promise<SidecarFileStatus> {
+  const fileName = SIDECAR_FILES[kind];
+  const filePath = path.join(process.cwd(), 'logs', 'sidecar', fileName);
+  const pathLabel = `logs/sidecar/${fileName}`;
+  const todayKst = toKstDateString(now);
+
+  // 1) 파일 존재/mtime 확인
+  let mtime: Date | null = null;
+  let exists = false;
+  try {
+    const st = await stat(filePath);
+    exists = true;
+    mtime = st.mtime;
+  } catch {
+    return {
+      kind,
+      fileName,
+      pathLabel,
+      exists: false,
+      modifiedAtIso: null,
+      modifiedDateKst: null,
+      todayKst,
+      ageHours: null,
+      isToday: false,
+      isStale: true,
+      parseError: false,
+      status: 'missing',
+      message: `${fileName}이(가) 없습니다. run_daily.bat 실행 후 다시 확인하세요.`,
+    };
+  }
+
+  // 2) 파싱 확인 (최소 검증 — JSON.parse만, 키 요구 0건)
+  let parseError = false;
+  try {
+    const buf = await readFile(filePath, 'utf-8');
+    JSON.parse(buf);
+  } catch {
+    parseError = true;
+  }
+
+  const ageHours = mtime ? Math.round(((now.getTime() - mtime.getTime()) / (1000 * 60 * 60)) * 10) / 10 : null;
+  const modifiedDateKst = mtime ? toKstDateString(mtime) : null;
+  const isToday = modifiedDateKst === todayKst;
+  const isStale = !isToday || (ageHours != null && ageHours >= STALE_HOURS);
+  const modifiedAtIso = mtime ? toKstIsoMinutes(mtime) : null;
+
+  if (parseError) {
+    return {
+      kind,
+      fileName,
+      pathLabel,
+      exists: true,
+      modifiedAtIso,
+      modifiedDateKst,
+      todayKst,
+      ageHours,
+      isToday,
+      isStale,
+      parseError: true,
+      status: 'error',
+      message: `${fileName} 파일은 있으나 읽기 실패. run_daily.bat 또는 run_sidecar.bat을 다시 실행해 주세요.`,
+    };
+  }
+
+  if (isStale) {
+    const dayLabel = isToday
+      ? `${ageHours}시간 경과`
+      : (modifiedDateKst ? `생성일 ${modifiedDateKst} (오늘 ${todayKst} 아님)` : '생성 시각 미확인');
+    return {
+      kind,
+      fileName,
+      pathLabel,
+      exists: true,
+      modifiedAtIso,
+      modifiedDateKst,
+      todayKst,
+      ageHours,
+      isToday,
+      isStale: true,
+      parseError: false,
+      status: 'stale',
+      message: `${fileName}이(가) 오늘 생성된 파일이 아닙니다 — ${dayLabel}. 최신 분석을 보려면 run_daily.bat를 다시 실행하세요.`,
+    };
+  }
+
+  return {
+    kind,
+    fileName,
+    pathLabel,
+    exists: true,
+    modifiedAtIso,
+    modifiedDateKst,
+    todayKst,
+    ageHours,
+    isToday: true,
+    isStale: false,
+    parseError: false,
+    status: 'ok',
+    message: `${fileName} 최신 (${modifiedAtIso}).`,
+  };
+}
+
+export async function getSidecarFileStatuses(now: Date = new Date()): Promise<{
+  scan: SidecarFileStatus;
+  sector: SidecarFileStatus;
+}> {
+  const [scan, sector] = await Promise.all([
+    readOneSidecarStatus('scan', now),
+    readOneSidecarStatus('sector', now),
+  ]);
+  return { scan, sector };
+}
+
+export interface SidecarFreshness {
+  scan: SidecarFileStatus;
+  sector: SidecarFileStatus;
+  allOk: boolean;                 // 둘 다 오늘·정상
+  anyMissing: boolean;
+  anyStale: boolean;
+  anyError: boolean;
+  needsRerun: boolean;            // 하나라도 missing/stale/error
+  bannerLevel: 'ok' | 'warn' | 'error'; // ok = 안내, warn = 노란/오렌지, error = 빨강
+  headline: string;               // 상단 박스 헤더 한 줄
+  detail: string;                 // 보조 한 줄
+}
+
+export function summarizeSidecarFreshness(scan: SidecarFileStatus, sector: SidecarFileStatus): SidecarFreshness {
+  const anyMissing = scan.status === 'missing' || sector.status === 'missing';
+  const anyError = scan.status === 'error' || sector.status === 'error';
+  const anyStale = scan.status === 'stale' || sector.status === 'stale';
+  const allOk = scan.status === 'ok' && sector.status === 'ok';
+  const needsRerun = anyMissing || anyStale || anyError;
+
+  let bannerLevel: SidecarFreshness['bannerLevel'] = 'ok';
+  let headline = '';
+  let detail = '';
+
+  if (anyMissing) {
+    bannerLevel = 'error';
+    headline = '사이드카 파일 누락 — run_daily.bat 재실행 필요';
+    const missingNames: string[] = [];
+    if (scan.status === 'missing') missingNames.push(scan.fileName);
+    if (sector.status === 'missing') missingNames.push(sector.fileName);
+    detail = `없는 파일: ${missingNames.join(', ')} — 분석 결과가 아니라 데이터 상태 안내입니다.`;
+  } else if (anyError) {
+    bannerLevel = 'error';
+    headline = '사이드카 파일 읽기 실패 — 재생성 필요';
+    detail = '파일은 있으나 JSON 파싱에 실패했습니다. run_daily.bat 또는 run_sidecar.bat을 다시 실행해 주세요.';
+  } else if (anyStale) {
+    bannerLevel = 'warn';
+    headline = '사이드카가 오늘 데이터가 아닙니다 — 재실행 권장';
+    detail = '오래된 파일을 그대로 표시하고 있습니다. 최신 분석을 보려면 run_daily.bat를 다시 실행하세요.';
+  } else if (allOk) {
+    bannerLevel = 'ok';
+    headline = '오늘 사이드카 최신 상태입니다.';
+    detail = '이 상태 박스는 분석 결과가 아니라 데이터 최신성 확인용입니다.';
+  } else {
+    // 만일을 위한 fallback (이론상 도달 X)
+    bannerLevel = 'warn';
+    headline = '사이드카 상태 확인 필요';
+    detail = '상태를 정확히 판단할 수 없습니다. run_daily.bat 실행 후 다시 확인해 주세요.';
+  }
+
+  return {
+    scan,
+    sector,
+    allOk,
+    anyMissing,
+    anyStale,
+    anyError,
+    needsRerun,
+    bannerLevel,
+    headline,
+    detail,
+  };
 }

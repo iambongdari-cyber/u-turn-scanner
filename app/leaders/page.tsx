@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { readFile } from 'fs/promises';
 import path from 'path';
-import { getClassificationDisplay } from '@/app/_lib/sidecar';
+import { getClassificationDisplay, getSidecarFileStatuses, type SidecarFileStatus } from '@/app/_lib/sidecar';
 
 export const dynamic = 'force-dynamic';
 
@@ -101,7 +101,8 @@ const SECTION_DESC: Record<string, string> = {
 };
 
 export default async function LeadersPage() {
-  const r = await loadDump();
+  const [r, statuses] = await Promise.all([loadDump(), getSidecarFileStatuses()]);
+  const sectorStatus = statuses.sector;
 
   if (r.status === 'missing') {
     return (
@@ -113,8 +114,9 @@ export default async function LeadersPage() {
             강한 섹터 안에서 진짜 주도주 후보와 후발주 관찰 종목을 구분합니다. 관찰·복기 보조용이며 매매 권유가 아닙니다.
           </p>
         </header>
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-6 text-amber-900">
-          아직 주도주·후발주 데이터가 없습니다. 먼저 <code className="rounded bg-amber-100 px-1">scripts/sector_dump.py</code>를 실행해 사이드카 JSON을 생성해 주세요.
+        <SidecarStatusBox s={sectorStatus} />
+        <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-6 text-amber-900">
+          아직 주도주·후발주 데이터가 없습니다. <code className="rounded bg-amber-100 px-1">sector_dump_latest.json</code>이 누락된 상태입니다 — run_daily.bat 재실행 후 다시 확인하세요.
         </div>
       </main>
     );
@@ -127,8 +129,9 @@ export default async function LeadersPage() {
           <Link href="/" className="text-sm text-blue-600 hover:underline">← 홈</Link>
           <h1 className="mt-2 text-2xl font-bold text-slate-800">주도주·후발주</h1>
         </header>
-        <div className="rounded-md border border-red-300 bg-red-50 p-6 text-red-900">
-          주도주·후발주 데이터를 읽는 중 문제가 발생했습니다. <code className="rounded bg-red-100 px-1">sector_dump_latest.json</code> 파일을 다시 생성해 주세요.
+        <SidecarStatusBox s={sectorStatus} />
+        <div className="mt-4 rounded-md border border-red-300 bg-red-50 p-6 text-red-900">
+          주도주·후발주 데이터를 읽는 중 문제가 발생했습니다 — <strong>파일은 있으나 읽기 실패</strong>. run_daily.bat 또는 run_sidecar.bat을 다시 실행해 주세요.
         </div>
       </main>
     );
@@ -172,6 +175,8 @@ export default async function LeadersPage() {
           {d.generated_at && <span>생성 {d.generated_at}</span>}
         </div>
       </header>
+
+      <SidecarStatusBox s={sectorStatus} />
 
       <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
         🥇 <strong>진짜 주도주 후보</strong>는 돈의 흐름과 가격 위치를 함께 본 분류입니다.
@@ -495,5 +500,48 @@ function MemberRow({ m }: { m: SectorMember }) {
         </Link>
       </div>
     </li>
+  );
+}
+
+// v0.3-4: 사이드카 파일 상태 안내 박스 (sector sidecar 전용 표시 — leaders 화면용)
+function SidecarStatusBox({ s }: { s: SidecarFileStatus }) {
+  if (s.status === 'ok') {
+    return (
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-emerald-800">
+        <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-2 py-0.5">
+          ✅ sector sidecar 최신
+        </span>
+        {s.modifiedAtIso && <span className="text-emerald-700">생성 {s.modifiedAtIso}</span>}
+        <span className="text-emerald-700">— 데이터 최신성 확인용 표시 (분석 결과 아님)</span>
+      </div>
+    );
+  }
+
+  const tone =
+    s.status === 'stale'
+      ? 'border-amber-300 bg-amber-50 text-amber-900'
+      : 'border-red-300 bg-red-50 text-red-900';
+  const badgeText =
+    s.status === 'missing' ? '파일 없음' :
+    s.status === 'error' ? '읽기 실패' :
+    s.status === 'stale' ? '오래된 파일' : '상태 확인 필요';
+
+  return (
+    <section className={`mb-4 rounded-md border p-3 ${tone}`}>
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="text-sm font-semibold">⚠️ sector sidecar 상태</span>
+        <span className="inline-flex rounded bg-white px-2 py-0.5 text-[11px] font-medium ring-1 ring-current/20">
+          {badgeText}
+        </span>
+        <span className="text-[11px]">
+          <code className="rounded bg-white/60 px-1">{s.pathLabel}</code>
+        </span>
+      </div>
+      <p className="mt-1 text-[12px]">{s.message}</p>
+      {s.status === 'stale' && (
+        <p className="mt-0.5 text-[11px]">오늘 데이터가 아닐 수 있습니다. 최신 분석을 보려면 run_daily.bat를 다시 실행하세요.</p>
+      )}
+      <p className="mt-1 text-[10px] opacity-80">분석 결과가 아니라 데이터 상태 안내입니다.</p>
+    </section>
   );
 }

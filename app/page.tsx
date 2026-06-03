@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import SearchForm from './_components/SearchForm';
+import { getSidecarFileStatuses, summarizeSidecarFreshness, type SidecarFileStatus, type SidecarFreshness } from '@/app/_lib/sidecar';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,6 +21,10 @@ export default async function Home() {
     .select('id', { count: 'exact', head: true })
     .eq('is_read', false);
 
+  // v0.3-4: 사이드카 파일 최신 상태 (홈 상단 안내 박스용)
+  const { scan: scanStatus, sector: sectorStatus } = await getSidecarFileStatuses();
+  const freshness = summarizeSidecarFreshness(scanStatus, sectorStatus);
+
   return (
     <main className="container mx-auto max-w-3xl p-6 sm:p-8">
       <header className="mb-6">
@@ -31,6 +36,8 @@ export default async function Home() {
           오늘은 시장 흐름을 먼저 보고, 바닥 U턴 후보와 주도주·후발주를 나눠 확인한 뒤, 키움 참고표와 매매일지로 정리합니다.
         </p>
       </header>
+
+      <SidecarFreshnessBox freshness={freshness} />
 
       <SearchForm defaultDate={latestDaily?.base_date} />
 
@@ -128,5 +135,88 @@ function AlertLink({ unreadCount }: { unreadCount: number | null | undefined }) 
         </span>
       )}
     </Link>
+  );
+}
+
+// v0.3-4: 사이드카 최신 상태 안내 박스
+function SidecarFreshnessBox({ freshness }: { freshness: SidecarFreshness }) {
+  const { bannerLevel, headline, detail, scan, sector, needsRerun } = freshness;
+  const wrapCls =
+    bannerLevel === 'error'
+      ? 'border-red-300 bg-red-50'
+      : bannerLevel === 'warn'
+      ? 'border-amber-300 bg-amber-50'
+      : 'border-emerald-200 bg-emerald-50';
+  const headCls =
+    bannerLevel === 'error'
+      ? 'text-red-900'
+      : bannerLevel === 'warn'
+      ? 'text-amber-900'
+      : 'text-emerald-900';
+  const iconText = bannerLevel === 'error' ? '❌' : bannerLevel === 'warn' ? '⚠️' : '✅';
+
+  return (
+    <section className={`mb-4 rounded-md border p-3 shadow-sm ${wrapCls}`}>
+      <div className={`flex flex-wrap items-baseline gap-2 ${headCls}`}>
+        <span className="text-sm font-semibold">
+          {iconText} 사이드카 최신 상태
+        </span>
+        <span className="text-xs font-normal">— {headline}</span>
+      </div>
+      <p className={`mt-1 text-[11px] ${headCls.replace('900', '800')}`}>
+        {detail}
+      </p>
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <SidecarStatusRow s={scan} />
+        <SidecarStatusRow s={sector} />
+      </div>
+      {needsRerun && (
+        <p className={`mt-2 rounded border px-2 py-1 text-[11px] ${
+          bannerLevel === 'error'
+            ? 'border-red-200 bg-white text-red-800'
+            : 'border-amber-200 bg-white text-amber-800'
+        }`}>
+          👉 <strong>run_daily.bat</strong> 재실행 후 다시 확인하세요. (사이드카 단독 재생성은 <strong>run_sidecar.bat</strong>도 가능)
+        </p>
+      )}
+      <p className={`mt-1 text-[10px] ${headCls.replace('900', '700')}`}>
+        이 박스는 분석 결과가 아니라 데이터 최신성 확인용입니다.
+      </p>
+    </section>
+  );
+}
+
+function SidecarStatusRow({ s }: { s: SidecarFileStatus }) {
+  const kindLabel = s.kind === 'scan' ? '바닥 후보 사이드카' : '섹터 사이드카';
+  const tone =
+    s.status === 'ok'
+      ? 'border-emerald-200 bg-white text-emerald-900'
+      : s.status === 'stale'
+      ? 'border-amber-200 bg-white text-amber-900'
+      : 'border-red-200 bg-white text-red-900';
+  const badge =
+    s.status === 'ok'
+      ? { text: '오늘 최신', cls: 'bg-emerald-100 text-emerald-800' }
+      : s.status === 'stale'
+      ? { text: '오래된 파일', cls: 'bg-amber-100 text-amber-800' }
+      : s.status === 'error'
+      ? { text: '읽기 실패', cls: 'bg-red-100 text-red-800' }
+      : { text: '파일 없음', cls: 'bg-red-100 text-red-800' };
+  return (
+    <div className={`rounded border p-2 text-[11px] ${tone}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-1">
+        <span className="font-medium">{kindLabel}</span>
+        <span className={`inline-flex rounded px-2 py-0.5 text-[10px] ${badge.cls}`}>{badge.text}</span>
+      </div>
+      <div className="mt-0.5 text-slate-600">
+        <code className="rounded bg-slate-100 px-1 text-[10px] text-slate-700">{s.pathLabel}</code>
+      </div>
+      {s.modifiedAtIso && (
+        <div className="mt-0.5 text-slate-600">생성 {s.modifiedAtIso}{s.ageHours != null && <> · {s.ageHours}시간 경과</>}</div>
+      )}
+      {(s.status === 'missing' || s.status === 'error' || s.status === 'stale') && (
+        <div className="mt-1 text-slate-700">{s.message}</div>
+      )}
+    </div>
   );
 }
