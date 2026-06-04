@@ -63,6 +63,7 @@ export default async function Home() {
         <FlowSection title="2) 후보 점검" desc="바닥 U턴 후보와 주도주·후발주를 나눠 본다.">
           <FlowLink href="/bottom-watch" emoji="🌱" label="바닥 U턴 후보" />
           <FlowLink href="/leaders" emoji="🏆" label="주도주·후발주" />
+          <FlowLink href="/changes" emoji="🔄" label="어제 대비 변화" />
         </FlowSection>
 
         <FlowSection title="3) 입력 참고" desc="키움 자동감시주문에 직접 입력하기 전 참고용 표.">
