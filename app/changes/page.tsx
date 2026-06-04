@@ -242,6 +242,9 @@ export default async function ChangesPage() {
         순위 △는 음수가 상승(개선)을 의미합니다.
       </div>
 
+      {/* v0.3-8: 핵심 변화 종목 빠르게 보기 — 4 카드 (NEW / DEPARTED / RANK_UP / RANK_DOWN TOP10) */}
+      <QuickTopCards changes={changes} />
+
       {/* 상세 목록 */}
       {changes.length === 0 ? (
         <div className="rounded border border-slate-200 bg-slate-50 p-6 text-sm text-slate-600">
@@ -348,5 +351,175 @@ function RowItem({ r }: { r: ChangeRow }) {
         </span>
       </td>
     </tr>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.3-8: "핵심 변화 종목 빠르게 보기" — NEW / DEPARTED / RANK_UP / RANK_DOWN TOP10
+// 표를 끝까지 스크롤하지 않아도 핵심 종목을 한눈에 보기 위한 4 카드.
+// compare_snapshots.py 결과(change_dump_latest.json)를 다시 계산하지 않고
+// 클라이언트에서 정렬/필터링만 한다. JSON 구조 변경 0건.
+// ─────────────────────────────────────────────────────────────────────────
+
+const QUICK_LIMIT = 10;
+
+function pickTop(
+  rows: ChangeRow[],
+  filter: (r: ChangeRow) => boolean,
+  sorter: (a: ChangeRow, b: ChangeRow) => number,
+  limit: number = QUICK_LIMIT,
+): ChangeRow[] {
+  return rows.filter(filter).sort(sorter).slice(0, limit);
+}
+
+function QuickTopCards({ changes }: { changes: ChangeRow[] }) {
+  // 1) NEW — today_rank 오름차순
+  const newRows = pickTop(
+    changes,
+    (r) => r.change_type === 'NEW',
+    (a, b) => (a.today_rank ?? 9999) - (b.today_rank ?? 9999),
+  );
+
+  // 2) DEPARTED — previous_rank(=yesterday_rank) 오름차순
+  const departedRows = pickTop(
+    changes,
+    (r) => r.change_type === 'DEPARTED',
+    (a, b) => (a.yesterday_rank ?? 9999) - (b.yesterday_rank ?? 9999),
+  );
+
+  // 3) RANK_UP — rank_delta 가 음수일수록 더 큰 개선 (예: -120, -80, -30)
+  const rankUpRows = pickTop(
+    changes,
+    (r) => typeof r.rank_delta === 'number' && (r.rank_delta as number) < 0,
+    (a, b) => (a.rank_delta as number) - (b.rank_delta as number),
+  );
+
+  // 4) RANK_DOWN — rank_delta 가 양수일수록 더 큰 하락 (예: +120, +80, +30)
+  const rankDownRows = pickTop(
+    changes,
+    (r) => typeof r.rank_delta === 'number' && (r.rank_delta as number) > 0,
+    (a, b) => (b.rank_delta as number) - (a.rank_delta as number),
+  );
+
+  return (
+    <section className="mb-5">
+      <h2 className="mb-1 text-sm font-semibold text-slate-800">핵심 변화 종목 빠르게 보기</h2>
+      <p className="mb-3 text-[11px] text-slate-500">
+        표를 끝까지 보지 않아도 직전 스냅샷 대비 핵심 변화 종목을 빠르게 확인할 수 있도록 4 카드로 추렸습니다.
+        모든 카드는 <strong>관찰 후보</strong>이며 매매 권유가 아닙니다.
+      </p>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <QuickCard
+          title="신규 진입 TOP10"
+          icon="🆕"
+          headCls="border-emerald-200 bg-emerald-50 text-emerald-900"
+          rows={newRows}
+          variant="NEW"
+          note="오늘 후보에 새로 들어온 종목입니다. 관찰 후보이며 매수 권유가 아닙니다."
+        />
+        <QuickCard
+          title="이탈 TOP10"
+          icon="🚪"
+          headCls="border-slate-300 bg-slate-50 text-slate-800"
+          rows={departedRows}
+          variant="DEPARTED"
+          note="직전 스냅샷에는 있었지만 오늘 후보에서는 빠진 종목입니다."
+        />
+        <QuickCard
+          title="순위 개선 TOP10"
+          icon="⬆"
+          headCls="border-sky-200 bg-sky-50 text-sky-900"
+          rows={rankUpRows}
+          variant="RANK_UP"
+          note="가격 상승이 아니라 스캐너 내 후보 순위 개선입니다. 매수 권유가 아닙니다."
+        />
+        <QuickCard
+          title="순위 하락 TOP10"
+          icon="⬇"
+          headCls="border-amber-200 bg-amber-50 text-amber-900"
+          rows={rankDownRows}
+          variant="RANK_DOWN"
+          note="가격 하락이 아니라 스캐너 내 후보 순위가 밀린 것입니다. 매도 권유가 아니라 복기 보조 정보입니다."
+        />
+      </div>
+    </section>
+  );
+}
+
+function QuickCard({
+  title, icon, headCls, rows, variant, note,
+}: {
+  title: string;
+  icon: string;
+  headCls: string;
+  rows: ChangeRow[];
+  variant: 'NEW' | 'DEPARTED' | 'RANK_UP' | 'RANK_DOWN';
+  note: string;
+}) {
+  return (
+    <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+      <div className={`flex items-baseline justify-between gap-2 rounded-t-md border-b px-3 py-2 ${headCls}`}>
+        <span className="text-sm font-semibold">{icon} {title}</span>
+        <span className="text-[11px] opacity-80">{rows.length}개</span>
+      </div>
+      <p className="px-3 pb-1 pt-2 text-[11px] text-slate-500">{note}</p>
+      {rows.length === 0 ? (
+        <div className="px-3 pb-3 pt-1 text-[12px] text-slate-500">해당 종목 없음</div>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {rows.map((r, i) => (
+            <QuickRow key={r.ticker} idx={i + 1} r={r} variant={variant} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function QuickRow({
+  idx, r, variant,
+}: { idx: number; r: ChangeRow; variant: 'NEW' | 'DEPARTED' | 'RANK_UP' | 'RANK_DOWN' }) {
+  const rankDelta = fmtDelta(r.rank_delta, 'rank');
+  const scoreDelta = fmtDelta(r.score_delta, 'score');
+
+  return (
+    <li className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-1.5 text-[12px] hover:bg-slate-50">
+      <span className="w-5 shrink-0 text-right text-[10px] tabular-nums text-slate-400">{idx}</span>
+      <Link href={`/stocks/${r.ticker}`} className="font-medium text-slate-800 hover:underline">
+        {r.name ?? r.ticker}
+      </Link>
+      <span className="text-[10px] text-slate-400">{r.ticker}</span>
+
+      {variant === 'NEW' && (
+        <span className="ml-auto inline-flex flex-wrap items-baseline gap-x-2 text-[11px] tabular-nums text-slate-600">
+          <span>오늘 순위 <strong className="text-slate-800">{fmtRank(r.today_rank)}</strong></span>
+          {r.today_score != null && <span>점수 <strong className="text-slate-800">{fmtScore(r.today_score)}</strong></span>}
+          {r.today_sector && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700">섹터 {r.today_sector}</span>}
+        </span>
+      )}
+
+      {variant === 'DEPARTED' && (
+        <span className="ml-auto inline-flex flex-wrap items-baseline gap-x-2 text-[11px] tabular-nums text-slate-600">
+          <span>직전 순위 <strong className="text-slate-800">{fmtRank(r.yesterday_rank)}</strong></span>
+          {r.yesterday_score != null && <span>직전 점수 <strong className="text-slate-800">{fmtScore(r.yesterday_score)}</strong></span>}
+          {(r.today_sector ?? r.yesterday_sector) && (
+            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700">
+              섹터 {r.today_sector ?? r.yesterday_sector}
+            </span>
+          )}
+        </span>
+      )}
+
+      {(variant === 'RANK_UP' || variant === 'RANK_DOWN') && (
+        <span className="ml-auto inline-flex flex-wrap items-baseline gap-x-2 text-[11px] tabular-nums text-slate-600">
+          <span>오늘 <strong className="text-slate-800">{fmtRank(r.today_rank)}</strong></span>
+          <span>직전 <strong className="text-slate-800">{fmtRank(r.yesterday_rank)}</strong></span>
+          <span className={`font-medium ${rankDelta.cls}`}>순위 △ {rankDelta.text}</span>
+          {r.score_delta != null && (
+            <span className={`font-medium ${scoreDelta.cls}`}>점수 △ {scoreDelta.text}</span>
+          )}
+        </span>
+      )}
+    </li>
   );
 }
