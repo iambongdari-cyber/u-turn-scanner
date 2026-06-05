@@ -219,6 +219,14 @@ export default async function ChangesPage() {
         </p>
       </div>
 
+      {/* v0.3-9: 변화 핵심 종목 카드 4종 — 최상단 highlight
+          - 대표 신규진입 (NEW 중 today_score 최고)
+          - 최대 순위상승 (rank_delta 최저, 즉 가장 음수)
+          - 최대 순위하락 (rank_delta 최고, 즉 가장 양수)
+          - 최대 점수상승 (score_delta 최고)
+          단일 종목 카드 highlight 형식. 데이터 없을 시 "해당 없음". */}
+      <KeyChangeHighlights changes={changes} />
+
       {/* 요약 카드 6칸 */}
       <section className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         <SummaryNum label="신규 진입" value={summary.n_new_entries} cls="border-emerald-200 bg-emerald-50 text-emerald-900" icon="🆕" />
@@ -521,5 +529,225 @@ function QuickRow({
         </span>
       )}
     </li>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.3-9: "변화 핵심 종목 카드" — /changes 최상단 highlight 4 카드
+// 단일 종목씩만 띄워서 한눈에 가장 두드러진 변화를 본다.
+// change_dump_latest.json 기존 구조만 사용. 분석 로직 변경 0건.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface KeyPick {
+  row: ChangeRow | null;     // null = 해당 없음
+  metricLabel: string;       // 우측 보조 정보 ("점수 35.0", "+18 점수", "+68 하락")
+}
+
+function pickFirst(rows: ChangeRow[], filter: (r: ChangeRow) => boolean, sorter: (a: ChangeRow, b: ChangeRow) => number): ChangeRow | null {
+  const arr = rows.filter(filter);
+  if (arr.length === 0) return null;
+  arr.sort(sorter);
+  return arr[0];
+}
+
+function pickKeyChanges(changes: ChangeRow[]): {
+  topNew: KeyPick;
+  topRankUp: KeyPick;
+  topRankDown: KeyPick;
+  topScoreUp: KeyPick;
+} {
+  // 1) 대표 신규진입 — NEW 중 today_score 가장 높음
+  const topNewRow = pickFirst(
+    changes,
+    (r) => r.change_type === 'NEW' && typeof r.today_score === 'number',
+    (a, b) => (Number(b.today_score) - Number(a.today_score)),
+  ) ?? pickFirst(
+    changes,
+    (r) => r.change_type === 'NEW',
+    (a, b) => (a.today_rank ?? 9999) - (b.today_rank ?? 9999),
+  );
+
+  // 2) 최대 순위상승 — rank_delta 가장 음수 (가장 큰 개선)
+  const topRankUpRow = pickFirst(
+    changes,
+    (r) => typeof r.rank_delta === 'number' && (r.rank_delta as number) < 0,
+    (a, b) => (a.rank_delta as number) - (b.rank_delta as number),
+  );
+
+  // 3) 최대 순위하락 — rank_delta 가장 양수
+  const topRankDownRow = pickFirst(
+    changes,
+    (r) => typeof r.rank_delta === 'number' && (r.rank_delta as number) > 0,
+    (a, b) => (b.rank_delta as number) - (a.rank_delta as number),
+  );
+
+  // 4) 최대 점수상승 — score_delta 가장 큰 양수
+  const topScoreUpRow = pickFirst(
+    changes,
+    (r) => typeof r.score_delta === 'number' && (r.score_delta as number) > 0,
+    (a, b) => (b.score_delta as number) - (a.score_delta as number),
+  );
+
+  return {
+    topNew: {
+      row: topNewRow,
+      metricLabel: topNewRow?.today_score != null ? `현재 점수 ${fmtScore(topNewRow.today_score)}` : '',
+    },
+    topRankUp: {
+      row: topRankUpRow,
+      metricLabel: topRankUpRow?.rank_delta != null ? `▲ ${Math.abs(topRankUpRow.rank_delta as number)} 상승` : '',
+    },
+    topRankDown: {
+      row: topRankDownRow,
+      metricLabel: topRankDownRow?.rank_delta != null ? `▼ ${topRankDownRow.rank_delta as number} 하락` : '',
+    },
+    topScoreUp: {
+      row: topScoreUpRow,
+      metricLabel: topScoreUpRow?.score_delta != null ? `+${Number(topScoreUpRow.score_delta).toFixed(1)} 점수` : '',
+    },
+  };
+}
+
+function KeyChangeHighlights({ changes }: { changes: ChangeRow[] }) {
+  const picks = pickKeyChanges(changes);
+  return (
+    <section className="mb-5">
+      <h2 className="mb-1 text-sm font-semibold text-slate-800">변화 핵심 종목</h2>
+      <p className="mb-3 text-[11px] text-slate-500">
+        직전 스냅샷 대비 오늘 가장 두드러진 변화 종목을 한 종목씩만 추렸습니다.
+        모든 카드는 <strong>관찰 후보</strong>이며 매매 권유가 아닙니다.
+      </p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <HighlightCard
+          title="대표 신규진입"
+          icon="🆕"
+          headCls="border-emerald-200 bg-emerald-50 text-emerald-900"
+          variant="NEW"
+          pick={picks.topNew}
+        />
+        <HighlightCard
+          title="최대 순위상승"
+          icon="⬆"
+          headCls="border-sky-200 bg-sky-50 text-sky-900"
+          variant="RANK_UP"
+          pick={picks.topRankUp}
+        />
+        <HighlightCard
+          title="최대 순위하락"
+          icon="⬇"
+          headCls="border-amber-200 bg-amber-50 text-amber-900"
+          variant="RANK_DOWN"
+          pick={picks.topRankDown}
+        />
+        <HighlightCard
+          title="최대 점수상승"
+          icon="📈"
+          headCls="border-indigo-200 bg-indigo-50 text-indigo-900"
+          variant="SCORE_UP"
+          pick={picks.topScoreUp}
+        />
+      </div>
+    </section>
+  );
+}
+
+function HighlightCard({
+  title, icon, headCls, variant, pick,
+}: {
+  title: string;
+  icon: string;
+  headCls: string;
+  variant: 'NEW' | 'RANK_UP' | 'RANK_DOWN' | 'SCORE_UP';
+  pick: KeyPick;
+}) {
+  const noteByVariant: Record<typeof variant, string> = {
+    NEW: '오늘 후보에 새로 들어온 종목 중 가장 점수가 높은 종목입니다. 관찰 후보이며 매수 권유가 아닙니다.',
+    RANK_UP: '가격 상승이 아니라 스캐너 내 후보 순위 개선폭이 가장 큰 종목입니다. 매수 권유가 아닙니다.',
+    RANK_DOWN: '가격 하락이 아니라 스캐너 내 후보 순위가 가장 많이 밀린 종목입니다. 매도 권유가 아니라 복기 보조 정보입니다.',
+    SCORE_UP: '스캐너 점수가 가장 많이 오른 종목입니다. 점수는 보조 지표이며 매수 권유가 아닙니다.',
+  };
+
+  const { row } = pick;
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+      <div className={`flex items-baseline justify-between gap-2 rounded-t-md border-b px-3 py-2 ${headCls}`}>
+        <span className="text-sm font-semibold">{icon} {title}</span>
+        {row && pick.metricLabel && (
+          <span className="text-[11px] font-medium tabular-nums">{pick.metricLabel}</span>
+        )}
+      </div>
+      <div className="px-3 py-3">
+        {row == null ? (
+          <p className="text-sm text-slate-500">해당 없음</p>
+        ) : (
+          <>
+            <Link
+              href={`/stocks/${row.ticker}`}
+              className="block text-base font-semibold text-slate-800 hover:underline"
+            >
+              {row.name ?? row.ticker}
+              <span className="ml-2 text-xs font-normal text-slate-400">{row.ticker}</span>
+            </Link>
+
+            <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] tabular-nums text-slate-600">
+              {variant === 'NEW' && (
+                <>
+                  <Stat label="현재 점수" value={fmtScore(row.today_score)} />
+                  <Stat label="현재 순위" value={fmtRank(row.today_rank)} />
+                  {row.today_sector && <Stat label="섹터" value={row.today_sector} />}
+                  {row.today_stage && <Stat label="단계" value={row.today_stage} />}
+                </>
+              )}
+
+              {(variant === 'RANK_UP' || variant === 'RANK_DOWN') && (
+                <>
+                  <Stat label="직전 순위" value={fmtRank(row.yesterday_rank)} />
+                  <Stat label="현재 순위" value={fmtRank(row.today_rank)} />
+                  <Stat
+                    label="순위 변화"
+                    value={
+                      typeof row.rank_delta === 'number'
+                        ? (row.rank_delta > 0 ? `▼ +${row.rank_delta}` : `▲ ${row.rank_delta}`)
+                        : '-'
+                    }
+                  />
+                  {row.today_sector && <Stat label="섹터" value={row.today_sector} />}
+                </>
+              )}
+
+              {variant === 'SCORE_UP' && (
+                <>
+                  <Stat label="직전 점수" value={fmtScore(row.yesterday_score)} />
+                  <Stat label="현재 점수" value={fmtScore(row.today_score)} />
+                  <Stat
+                    label="점수 변화"
+                    value={
+                      typeof row.score_delta === 'number'
+                        ? (row.score_delta > 0 ? `+${Number(row.score_delta).toFixed(1)}` : Number(row.score_delta).toFixed(1))
+                        : '-'
+                    }
+                  />
+                  {row.today_sector && <Stat label="섹터" value={row.today_sector} />}
+                </>
+              )}
+            </div>
+          </>
+        )}
+
+        <p className="mt-3 text-[10px] leading-snug text-slate-500">
+          {noteByVariant[variant]}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-1">
+      <span className="text-slate-500">{label}</span>
+      <span className="font-medium text-slate-800">{value}</span>
+    </div>
   );
 }
