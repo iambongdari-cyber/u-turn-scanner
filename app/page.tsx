@@ -107,6 +107,70 @@ function pickHomeKeyChanges(rows: ChangeRowLite[] | undefined): HomeKeyPicks {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// v0.3-15: "오늘 다시 볼 후보" 3 카드 픽
+// ① 강세 지속 — TOP10 유지 + 점수 상승 (score_delta 내림차순)
+// ② 다방면 개선 — 순위 상승 + 점수 상승 동시 (rank_delta 오름차순 + score_delta 보조)
+// ③ U턴 시도 강화 — today_stage='U턴 시도' + score_delta>0 (score_delta 내림차순)
+// 중복 회피: ① → ② → ③ 순서대로 선택, 이미 사용된 ticker 는 다음 후보에서 제외.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface HomeSecondLookPicks {
+  topConsistent: ChangeRowLite | null;   // ① 강세 지속
+  topMomentum: ChangeRowLite | null;     // ② 다방면 개선
+  topUTurnStrong: ChangeRowLite | null;  // ③ U턴 시도 강화
+}
+
+function pickHomeSecondLook(rows: ChangeRowLite[] | undefined): HomeSecondLookPicks {
+  if (!rows || rows.length === 0) {
+    return { topConsistent: null, topMomentum: null, topUTurnStrong: null };
+  }
+
+  // ① TOP10 유지 + 점수 상승
+  const consistent = [...rows]
+    .filter((r) =>
+      typeof r.today_rank === 'number' && (r.today_rank as number) <= 10
+      && typeof r.score_delta === 'number' && (r.score_delta as number) > 0,
+    )
+    .sort((a, b) => (b.score_delta as number) - (a.score_delta as number))[0]
+    ?? null;
+
+  const used = new Set<string>();
+  if (consistent) used.add(consistent.ticker);
+
+  // ② 순위 상승 + 점수 상승 동시 (rank_delta 가장 음수 + score_delta 보조)
+  const momentum = [...rows]
+    .filter((r) =>
+      !used.has(r.ticker)
+      && typeof r.rank_delta === 'number' && (r.rank_delta as number) < 0
+      && typeof r.score_delta === 'number' && (r.score_delta as number) > 0,
+    )
+    .sort((a, b) => {
+      const ra = a.rank_delta as number;
+      const rb = b.rank_delta as number;
+      if (ra !== rb) return ra - rb;
+      return (b.score_delta as number) - (a.score_delta as number);
+    })[0]
+    ?? null;
+  if (momentum) used.add(momentum.ticker);
+
+  // ③ U턴 시도 + 점수 상승
+  const uturn = [...rows]
+    .filter((r) =>
+      !used.has(r.ticker)
+      && r.today_stage === 'U턴 시도'
+      && typeof r.score_delta === 'number' && (r.score_delta as number) > 0,
+    )
+    .sort((a, b) => (b.score_delta as number) - (a.score_delta as number))[0]
+    ?? null;
+
+  return {
+    topConsistent: consistent,
+    topMomentum: momentum,
+    topUTurnStrong: uturn,
+  };
+}
+
 export default async function Home() {
   // 가장 최근 일일 리포트 1건
   const { data: latestDaily } = await supabase
@@ -134,6 +198,9 @@ export default async function Home() {
   const changeDump = await loadChangeDumpForHome();
   const keyPicks = pickHomeKeyChanges(changeDump?.changes);
 
+  // v0.3-15: "오늘 다시 볼 후보" 3 카드 픽 (확인 우선순위 참고용)
+  const secondLookPicks = pickHomeSecondLook(changeDump?.changes);
+
   return (
     <main className="container mx-auto max-w-3xl p-6 sm:p-8">
       <header className="mb-6">
@@ -151,6 +218,8 @@ export default async function Home() {
       <HomeSummaryCard summary={homeSummary} />
 
       <ChangeHighlightBox dump={changeDump} picks={keyPicks} />
+
+      <SecondLookSection dump={changeDump} picks={secondLookPicks} />
 
       <SearchForm defaultDate={latestDaily?.base_date} />
 
@@ -668,6 +737,194 @@ function MiniHighlight({
               선정 이유: {reason}
             </div>
           )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.3-15: "오늘 다시 볼 후보" 영역
+// 5 카드 박스 바로 아래에 세로 1열 3 카드.
+// 매수 추천이 아니라 "확인 우선순위 참고용"임을 명확히 한다.
+// /changes?focus=... 인프라 (v0.3-12/13)를 그대로 활용해 변화 자세히 보기 링크 제공.
+// ─────────────────────────────────────────────────────────────────────────
+
+function SecondLookSection({
+  dump, picks,
+}: { dump: ChangeDumpLite | null; picks: HomeSecondLookPicks }) {
+  // change_dump 자체가 부재이거나 status 정상이 아니면 본 영역은 표시하지 않는다
+  // (홈 박스 v0.3-10/14가 이미 안내를 처리).
+  if (!dump || dump.status !== 'ok') return null;
+
+  // 3 카드 모두 비어 있으면 영역 자체를 숨긴다 — 사용자 시선 분산 방지.
+  const allEmpty =
+    !picks.topConsistent && !picks.topMomentum && !picks.topUTurnStrong;
+  if (allEmpty) return null;
+
+  return (
+    <section className="mb-4 rounded-md border border-amber-200 bg-white p-3 shadow-sm">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-amber-900">오늘 다시 볼 후보</h2>
+        <Link
+          href="/changes"
+          className="text-[11px] text-blue-600 hover:underline"
+        >
+          어제 대비 변화 자세히 보기 →
+        </Link>
+      </div>
+      <p className="mb-3 text-[11px] leading-snug text-amber-800">
+        오늘 변화 중 특히 다시 확인할 가치가 있는 종목입니다.
+        매수 추천이 아니라 확인 우선순위 참고용입니다.
+      </p>
+
+      <div className="grid grid-cols-1 gap-2">
+        <SecondLookCard
+          order="①"
+          label="강세 지속"
+          tone="emerald"
+          row={picks.topConsistent}
+          reason="이미 상위권인데 점수가 더 오른 종목 — 강세 지속을 다시 확인할 후보입니다."
+          metricKind="CONSISTENT"
+          detailHref="/changes?focus=score"
+        />
+        <SecondLookCard
+          order="②"
+          label="다방면 개선"
+          tone="sky"
+          row={picks.topMomentum}
+          reason="순위와 점수가 함께 개선된 종목 — 다방면 신호 정렬, 다시 볼 후보입니다."
+          metricKind="MOMENTUM"
+          detailHref="/changes?focus=up"
+        />
+        <SecondLookCard
+          order="③"
+          label="U턴 시도 강화"
+          tone="indigo"
+          row={picks.topUTurnStrong}
+          reason="U턴 시도 단계 + 직전 대비 점수 상승 — 단계 진행과 점수 강화를 함께 확인할 후보입니다."
+          metricKind="UTURN"
+          detailHref="/changes?focus=score"
+        />
+      </div>
+
+      <p className="mt-2 text-[10px] leading-snug text-slate-500">
+        이 영역은 매수 추천이 아니라 확인 우선순위 보조 정보입니다.
+        모든 표시는 가격이 아니라 스캐너 내 후보 순위·점수의 변화입니다.
+      </p>
+    </section>
+  );
+}
+
+function SecondLookCard({
+  order, label, tone, row, reason, metricKind, detailHref,
+}: {
+  order: string;
+  label: string;
+  tone: 'emerald' | 'sky' | 'indigo';
+  row: ChangeRowLite | null;
+  reason: string;
+  metricKind: 'CONSISTENT' | 'MOMENTUM' | 'UTURN';
+  detailHref: string;
+}) {
+  const toneCls =
+    tone === 'emerald' ? 'border-emerald-200 bg-emerald-50' :
+    tone === 'sky' ? 'border-sky-200 bg-sky-50' :
+                     'border-indigo-200 bg-indigo-50';
+  const headTextCls =
+    tone === 'emerald' ? 'text-emerald-900' :
+    tone === 'sky' ? 'text-sky-900' :
+                     'text-indigo-900';
+
+  return (
+    <div className={`rounded border p-2.5 ${toneCls}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className={`text-[11px] font-semibold ${headTextCls}`}>
+          {order} {label}
+        </div>
+        <Link
+          href={detailHref}
+          className="text-[10px] text-blue-700 hover:underline"
+          title="변화 자세히 보기"
+        >
+          변화 자세히 보기 →
+        </Link>
+      </div>
+
+      {row == null ? (
+        <div className="mt-1 text-xs text-slate-500">해당 없음</div>
+      ) : (
+        <>
+          <Link
+            href={`/stocks/${row.ticker}`}
+            className="mt-1 block text-sm font-semibold text-slate-800 hover:underline"
+          >
+            {row.name ?? row.ticker}
+            <span className="ml-1 text-[10px] font-normal text-slate-400">{row.ticker}</span>
+          </Link>
+
+          <div className="mt-0.5 text-[11px] tabular-nums text-slate-700">
+            {metricKind === 'CONSISTENT' && (
+              <>
+                {row.today_rank != null && <>TOP10 {row.today_rank}위 · </>}
+                {row.today_score != null && (
+                  <>점수 {fmtScoreSimple(row.today_score)}</>
+                )}
+                {row.score_delta != null && (
+                  <> ({Number(row.score_delta) > 0 ? '+' : ''}{Number(row.score_delta).toFixed(1)})</>
+                )}
+              </>
+            )}
+            {metricKind === 'MOMENTUM' && (
+              <>
+                {row.yesterday_rank != null && row.today_rank != null && (
+                  <>순위 {fmtRankSimple(row.yesterday_rank)} → {fmtRankSimple(row.today_rank)}</>
+                )}
+                {row.rank_delta != null && (
+                  <> ▲{Math.abs(row.rank_delta)}</>
+                )}
+                {row.score_delta != null && (
+                  <> · 점수 +{Number(row.score_delta).toFixed(1)}</>
+                )}
+              </>
+            )}
+            {metricKind === 'UTURN' && (
+              <>
+                {row.today_score != null && (
+                  <>현재 점수 {fmtScoreSimple(row.today_score)}</>
+                )}
+                {row.score_delta != null && (
+                  <> · 직전 대비 +{Number(row.score_delta).toFixed(1)}</>
+                )}
+                {row.today_rank != null && (
+                  <> · 순위 {row.today_rank}위</>
+                )}
+              </>
+            )}
+          </div>
+
+          {(row.today_stage || row.yesterday_stage) && (
+            <div className="mt-0.5 text-[11px] text-slate-600">
+              <span className="text-slate-500">{row.today_stage ? '현재단계' : '직전단계'}</span>{' '}
+              <span className="font-medium text-slate-800">{row.today_stage ?? row.yesterday_stage}</span>
+              {row.today_sector && (
+                <span className="ml-2 text-slate-500">섹터 <span className="text-slate-800">{row.today_sector}</span></span>
+              )}
+            </div>
+          )}
+
+          <p className="mt-1.5 text-[10px] leading-snug text-slate-600">
+            이유: {reason}
+          </p>
+
+          <div className="mt-1 text-right">
+            <Link
+              href={`/stocks/${row.ticker}`}
+              className="text-[10px] text-blue-600 hover:underline"
+            >
+              종목 상세 →
+            </Link>
+          </div>
         </>
       )}
     </div>
