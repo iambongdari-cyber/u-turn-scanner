@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { readFile } from 'fs/promises';
 import path from 'path';
+import FocusScroller from './_components/FocusScroller';
 
 export const dynamic = 'force-dynamic';
 
@@ -241,6 +242,9 @@ export default async function ChangesPage({
         </div>
       </Header>
 
+      {/* v0.3-13: ?focus=<key> 진입 시 해당 카드 위치로 자동 스크롤 (클라이언트 측 동작) */}
+      <FocusScroller focus={focus} />
+
       {/* v0.3-7 보정: 상단에 비교 기준을 강조해 보여준다.
           daily 스냅샷이 연속 날짜라는 보장이 없으므로
           사용자가 정확한 비교 기준을 즉시 인식할 수 있도록 한다. */}
@@ -469,6 +473,7 @@ function QuickTopCards({ changes, focus }: { changes: ChangeRow[]; focus: FocusK
           variant="DEPARTED"
           note="직전 스냅샷에는 있었지만 오늘 후보에서는 빠진 종목입니다."
           focused={isQuickFocused('DEPARTED', focus)}
+          domId="focus-out"
         />
         <QuickCard
           title="순위 개선 TOP10"
@@ -494,7 +499,7 @@ function QuickTopCards({ changes, focus }: { changes: ChangeRow[]; focus: FocusK
 }
 
 function QuickCard({
-  title, icon, headCls, rows, variant, note, focused,
+  title, icon, headCls, rows, variant, note, focused, domId,
 }: {
   title: string;
   icon: string;
@@ -503,10 +508,11 @@ function QuickCard({
   variant: 'NEW' | 'DEPARTED' | 'RANK_UP' | 'RANK_DOWN';
   note: string;
   focused?: boolean;  // v0.3-12: ?focus=... 매칭 시 ring 강조
+  domId?: string;     // v0.3-13: FocusScroller 가 찾아갈 id (예: "focus-out")
 }) {
   const ringCls = focused ? 'ring-2 ring-indigo-400 ring-offset-1' : '';
   return (
-    <div className={`rounded-md border border-slate-200 bg-white shadow-sm ${ringCls}`}>
+    <div id={domId} className={`scroll-mt-4 rounded-md border border-slate-200 bg-white shadow-sm ${ringCls}`}>
       <div className={`flex items-baseline justify-between gap-2 rounded-t-md border-b px-3 py-2 ${headCls}`}>
         <span className="text-sm font-semibold">{icon} {title}</span>
         <span className="text-[11px] opacity-80">{rows.length}개</span>
@@ -666,6 +672,7 @@ function KeyChangeHighlights({ changes, focus }: { changes: ChangeRow[]; focus: 
           variant="NEW"
           pick={picks.topNew}
           focused={isHighlightFocused('NEW', focus)}
+          domId="focus-new"
         />
         <HighlightCard
           title="최대 순위상승"
@@ -674,6 +681,7 @@ function KeyChangeHighlights({ changes, focus }: { changes: ChangeRow[]; focus: 
           variant="RANK_UP"
           pick={picks.topRankUp}
           focused={isHighlightFocused('RANK_UP', focus)}
+          domId="focus-up"
         />
         <HighlightCard
           title="최대 순위하락"
@@ -682,6 +690,7 @@ function KeyChangeHighlights({ changes, focus }: { changes: ChangeRow[]; focus: 
           variant="RANK_DOWN"
           pick={picks.topRankDown}
           focused={isHighlightFocused('RANK_DOWN', focus)}
+          domId="focus-down"
         />
         <HighlightCard
           title="최대 점수상승"
@@ -690,6 +699,7 @@ function KeyChangeHighlights({ changes, focus }: { changes: ChangeRow[]; focus: 
           variant="SCORE_UP"
           pick={picks.topScoreUp}
           focused={isHighlightFocused('SCORE_UP', focus)}
+          domId="focus-score"
         />
       </div>
     </section>
@@ -697,7 +707,7 @@ function KeyChangeHighlights({ changes, focus }: { changes: ChangeRow[]; focus: 
 }
 
 function HighlightCard({
-  title, icon, headCls, variant, pick, focused,
+  title, icon, headCls, variant, pick, focused, domId,
 }: {
   title: string;
   icon: string;
@@ -705,6 +715,7 @@ function HighlightCard({
   variant: 'NEW' | 'RANK_UP' | 'RANK_DOWN' | 'SCORE_UP';
   pick: KeyPick;
   focused?: boolean; // v0.3-12: ?focus=... 로 강조 대상이면 true
+  domId?: string;    // v0.3-13: FocusScroller 가 찾아갈 id (예: "focus-new")
 }) {
   const noteByVariant: Record<typeof variant, string> = {
     NEW: '오늘 후보에 새로 들어온 종목 중 가장 점수가 높은 종목입니다. 관찰 후보이며 매수 권유가 아닙니다.',
@@ -717,7 +728,7 @@ function HighlightCard({
   const ringCls = focused ? 'ring-2 ring-indigo-400 ring-offset-1' : '';
 
   return (
-    <div className={`rounded-md border border-slate-200 bg-white shadow-sm ${ringCls}`}>
+    <div id={domId} className={`scroll-mt-4 rounded-md border border-slate-200 bg-white shadow-sm ${ringCls}`}>
       <div className={`flex items-baseline justify-between gap-2 rounded-t-md border-b px-3 py-2 ${headCls}`}>
         <span className="text-sm font-semibold">{icon} {title}</span>
         {row && pick.metricLabel && (
