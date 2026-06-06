@@ -31,7 +31,8 @@ interface ChangeRowLite {
   yesterday_score: number | null;
   score_delta: number | null;
   today_sector: string | null;
-  today_stage: string | null;   // v0.3-10 보정: "현재단계" 표시용 (예: "바닥 관찰")
+  today_stage: string | null;        // v0.3-10 보정: "현재단계" 표시용 (예: "바닥 관찰")
+  yesterday_stage: string | null;    // v0.3-14: DEPARTED 카드용 — 오늘 빠진 종목은 today_stage=null이라 직전단계 표시
   change_type: string;
 }
 
@@ -60,11 +61,12 @@ interface HomeKeyPicks {
   topRankUp: ChangeRowLite | null;
   topRankDown: ChangeRowLite | null;
   topScoreUp: ChangeRowLite | null;
+  topDeparted: ChangeRowLite | null;   // v0.3-14: 대표 이탈 (yesterday_rank 오름차순)
 }
 
 function pickHomeKeyChanges(rows: ChangeRowLite[] | undefined): HomeKeyPicks {
   if (!rows || rows.length === 0) {
-    return { topNew: null, topRankUp: null, topRankDown: null, topScoreUp: null };
+    return { topNew: null, topRankUp: null, topRankDown: null, topScoreUp: null, topDeparted: null };
   }
   // /changes 의 v0.3-9 기준과 동일하게 선정.
   const newPick = [...rows]
@@ -90,11 +92,18 @@ function pickHomeKeyChanges(rows: ChangeRowLite[] | undefined): HomeKeyPicks {
     .sort((a, b) => (b.score_delta as number) - (a.score_delta as number))[0]
     ?? null;
 
+  // v0.3-14: 대표 이탈 — DEPARTED 중 yesterday_rank 가 가장 작은(=직전 가장 높은 순위) 종목
+  const departedPick = [...rows]
+    .filter((r) => r.change_type === 'DEPARTED' && typeof r.yesterday_rank === 'number')
+    .sort((a, b) => (a.yesterday_rank as number) - (b.yesterday_rank as number))[0]
+    ?? null;
+
   return {
     topNew: newPick ?? null,
     topRankUp: upPick,
     topRankDown: downPick,
     topScoreUp: scoreUpPick,
+    topDeparted: departedPick,
   };
 }
 
@@ -523,7 +532,7 @@ function ChangeHighlightBox({
       {allEmpty ? (
         <p className="text-xs text-slate-500">오늘 두드러진 변화가 없습니다.</p>
       ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <MiniHighlight
             label="대표 신규진입"
             icon="🆕"
@@ -576,6 +585,24 @@ function ChangeHighlightBox({
             reason="스캐너 점수 상승폭 1위"
             detailHref="/changes?focus=score"
           />
+          {/* v0.3-14: 대표 이탈 — yesterday_rank 오름차순 첫 항목 */}
+          <MiniHighlight
+            label="대표 이탈"
+            icon="🚪"
+            tone="slate"
+            row={picks.topDeparted}
+            metric={
+              picks.topDeparted?.yesterday_rank != null
+                ? `직전 순위 ${fmtRankSimple(picks.topDeparted.yesterday_rank)}${
+                    picks.topDeparted?.yesterday_score != null
+                      ? ` · 직전 점수 ${fmtScoreSimple(picks.topDeparted.yesterday_score)}`
+                      : ''
+                  }`
+                : ''
+            }
+            reason="직전 스냅샷에서 가장 높은 순위였던 종목"
+            detailHref="/changes?focus=out"
+          />
         </div>
       )}
 
@@ -591,7 +618,7 @@ function MiniHighlight({
 }: {
   label: string;
   icon: string;
-  tone: 'emerald' | 'sky' | 'amber' | 'indigo';
+  tone: 'emerald' | 'sky' | 'amber' | 'indigo' | 'slate';  // v0.3-14: 'slate' 톤 추가 (DEPARTED 카드용)
   row: ChangeRowLite | null;
   metric: string;
   reason: string;   // v0.3-11: "선정 이유" 카드 하단 한 줄 (row 있을 때만 노출)
@@ -601,6 +628,7 @@ function MiniHighlight({
     tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' :
     tone === 'sky' ? 'border-sky-200 bg-sky-50 text-sky-900' :
     tone === 'amber' ? 'border-amber-200 bg-amber-50 text-amber-900' :
+    tone === 'slate' ? 'border-slate-300 bg-slate-50 text-slate-800' :
                        'border-indigo-200 bg-indigo-50 text-indigo-900';
   return (
     <div className={`rounded border p-2 ${toneCls}`}>
@@ -628,10 +656,11 @@ function MiniHighlight({
           {metric && (
             <div className="mt-0.5 text-[11px] tabular-nums text-slate-600">{metric}</div>
           )}
-          {row.today_stage && (
+          {/* v0.3-14: today_stage 있으면 "현재단계", 없고 yesterday_stage 있으면 "직전단계" 자동 분기 (DEPARTED 카드용) */}
+          {(row.today_stage || row.yesterday_stage) && (
             <div className="mt-0.5 text-[11px] text-slate-600">
-              <span className="text-slate-500">현재단계</span>{' '}
-              <span className="font-medium text-slate-800">{row.today_stage}</span>
+              <span className="text-slate-500">{row.today_stage ? '현재단계' : '직전단계'}</span>{' '}
+              <span className="font-medium text-slate-800">{row.today_stage ?? row.yesterday_stage}</span>
             </div>
           )}
           {reason && (
