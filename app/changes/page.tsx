@@ -118,8 +118,43 @@ function fmtDelta(n: number | null | undefined, kind: 'rank' | 'score'): { text:
   return { text, cls: good ? 'text-emerald-700' : 'text-rose-700' };
 }
 
-export default async function ChangesPage() {
+// v0.3-12: 홈에서 진입할 때 사용하는 focus 키. /changes 페이지가 인식해 해당 카드에 ring 강조.
+// 허용 키: new(신규진입) / out(이탈) / up(순위상승) / down(순위하락) / score(점수상승) / sector(섹터변화)
+type FocusKey = 'new' | 'out' | 'up' | 'down' | 'score' | 'sector';
+
+function normalizeFocus(raw: string | string[] | undefined): FocusKey | null {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (!v) return null;
+  const allowed: FocusKey[] = ['new', 'out', 'up', 'down', 'score', 'sector'];
+  return (allowed as string[]).includes(v) ? (v as FocusKey) : null;
+}
+
+// HighlightCard / QuickCard 의 variant 와 focus 매핑.
+function isHighlightFocused(variant: 'NEW' | 'RANK_UP' | 'RANK_DOWN' | 'SCORE_UP', focus: FocusKey | null): boolean {
+  if (!focus) return false;
+  if (focus === 'new' && variant === 'NEW') return true;
+  if (focus === 'up' && variant === 'RANK_UP') return true;
+  if (focus === 'down' && variant === 'RANK_DOWN') return true;
+  if (focus === 'score' && variant === 'SCORE_UP') return true;
+  return false;
+}
+function isQuickFocused(variant: 'NEW' | 'DEPARTED' | 'RANK_UP' | 'RANK_DOWN', focus: FocusKey | null): boolean {
+  if (!focus) return false;
+  if (focus === 'new' && variant === 'NEW') return true;
+  if (focus === 'out' && variant === 'DEPARTED') return true;
+  if (focus === 'up' && variant === 'RANK_UP') return true;
+  if (focus === 'down' && variant === 'RANK_DOWN') return true;
+  return false;
+}
+
+export default async function ChangesPage({
+  searchParams,
+}: {
+  searchParams?: { focus?: string | string[] };
+}) {
   const r = await loadChangeDump();
+  // v0.3-12: 홈에서 ?focus=... 로 들어왔을 때 해당 카드 강조
+  const focus = normalizeFocus(searchParams?.focus);
 
   // 화면 헤더(공통)
   // 큰 제목은 사용자 이해를 위해 "어제 대비 변화"를 유지하되,
@@ -225,7 +260,7 @@ export default async function ChangesPage() {
           - 최대 순위하락 (rank_delta 최고, 즉 가장 양수)
           - 최대 점수상승 (score_delta 최고)
           단일 종목 카드 highlight 형식. 데이터 없을 시 "해당 없음". */}
-      <KeyChangeHighlights changes={changes} />
+      <KeyChangeHighlights changes={changes} focus={focus} />
 
       {/* 요약 카드 6칸 */}
       <section className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -251,7 +286,7 @@ export default async function ChangesPage() {
       </div>
 
       {/* v0.3-8: 핵심 변화 종목 빠르게 보기 — 4 카드 (NEW / DEPARTED / RANK_UP / RANK_DOWN TOP10) */}
-      <QuickTopCards changes={changes} />
+      <QuickTopCards changes={changes} focus={focus} />
 
       {/* 상세 목록 */}
       {changes.length === 0 ? (
@@ -380,7 +415,7 @@ function pickTop(
   return rows.filter(filter).sort(sorter).slice(0, limit);
 }
 
-function QuickTopCards({ changes }: { changes: ChangeRow[] }) {
+function QuickTopCards({ changes, focus }: { changes: ChangeRow[]; focus: FocusKey | null }) {
   // 1) NEW — today_rank 오름차순
   const newRows = pickTop(
     changes,
@@ -424,6 +459,7 @@ function QuickTopCards({ changes }: { changes: ChangeRow[] }) {
           rows={newRows}
           variant="NEW"
           note="오늘 후보에 새로 들어온 종목입니다. 관찰 후보이며 매수 권유가 아닙니다."
+          focused={isQuickFocused('NEW', focus)}
         />
         <QuickCard
           title="이탈 TOP10"
@@ -432,6 +468,7 @@ function QuickTopCards({ changes }: { changes: ChangeRow[] }) {
           rows={departedRows}
           variant="DEPARTED"
           note="직전 스냅샷에는 있었지만 오늘 후보에서는 빠진 종목입니다."
+          focused={isQuickFocused('DEPARTED', focus)}
         />
         <QuickCard
           title="순위 개선 TOP10"
@@ -440,6 +477,7 @@ function QuickTopCards({ changes }: { changes: ChangeRow[] }) {
           rows={rankUpRows}
           variant="RANK_UP"
           note="가격 상승이 아니라 스캐너 내 후보 순위 개선입니다. 매수 권유가 아닙니다."
+          focused={isQuickFocused('RANK_UP', focus)}
         />
         <QuickCard
           title="순위 하락 TOP10"
@@ -448,6 +486,7 @@ function QuickTopCards({ changes }: { changes: ChangeRow[] }) {
           rows={rankDownRows}
           variant="RANK_DOWN"
           note="가격 하락이 아니라 스캐너 내 후보 순위가 밀린 것입니다. 매도 권유가 아니라 복기 보조 정보입니다."
+          focused={isQuickFocused('RANK_DOWN', focus)}
         />
       </div>
     </section>
@@ -455,7 +494,7 @@ function QuickTopCards({ changes }: { changes: ChangeRow[] }) {
 }
 
 function QuickCard({
-  title, icon, headCls, rows, variant, note,
+  title, icon, headCls, rows, variant, note, focused,
 }: {
   title: string;
   icon: string;
@@ -463,9 +502,11 @@ function QuickCard({
   rows: ChangeRow[];
   variant: 'NEW' | 'DEPARTED' | 'RANK_UP' | 'RANK_DOWN';
   note: string;
+  focused?: boolean;  // v0.3-12: ?focus=... 매칭 시 ring 강조
 }) {
+  const ringCls = focused ? 'ring-2 ring-indigo-400 ring-offset-1' : '';
   return (
-    <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+    <div className={`rounded-md border border-slate-200 bg-white shadow-sm ${ringCls}`}>
       <div className={`flex items-baseline justify-between gap-2 rounded-t-md border-b px-3 py-2 ${headCls}`}>
         <span className="text-sm font-semibold">{icon} {title}</span>
         <span className="text-[11px] opacity-80">{rows.length}개</span>
@@ -608,7 +649,7 @@ function pickKeyChanges(changes: ChangeRow[]): {
   };
 }
 
-function KeyChangeHighlights({ changes }: { changes: ChangeRow[] }) {
+function KeyChangeHighlights({ changes, focus }: { changes: ChangeRow[]; focus: FocusKey | null }) {
   const picks = pickKeyChanges(changes);
   return (
     <section className="mb-5">
@@ -624,6 +665,7 @@ function KeyChangeHighlights({ changes }: { changes: ChangeRow[] }) {
           headCls="border-emerald-200 bg-emerald-50 text-emerald-900"
           variant="NEW"
           pick={picks.topNew}
+          focused={isHighlightFocused('NEW', focus)}
         />
         <HighlightCard
           title="최대 순위상승"
@@ -631,6 +673,7 @@ function KeyChangeHighlights({ changes }: { changes: ChangeRow[] }) {
           headCls="border-sky-200 bg-sky-50 text-sky-900"
           variant="RANK_UP"
           pick={picks.topRankUp}
+          focused={isHighlightFocused('RANK_UP', focus)}
         />
         <HighlightCard
           title="최대 순위하락"
@@ -638,6 +681,7 @@ function KeyChangeHighlights({ changes }: { changes: ChangeRow[] }) {
           headCls="border-amber-200 bg-amber-50 text-amber-900"
           variant="RANK_DOWN"
           pick={picks.topRankDown}
+          focused={isHighlightFocused('RANK_DOWN', focus)}
         />
         <HighlightCard
           title="최대 점수상승"
@@ -645,6 +689,7 @@ function KeyChangeHighlights({ changes }: { changes: ChangeRow[] }) {
           headCls="border-indigo-200 bg-indigo-50 text-indigo-900"
           variant="SCORE_UP"
           pick={picks.topScoreUp}
+          focused={isHighlightFocused('SCORE_UP', focus)}
         />
       </div>
     </section>
@@ -652,13 +697,14 @@ function KeyChangeHighlights({ changes }: { changes: ChangeRow[] }) {
 }
 
 function HighlightCard({
-  title, icon, headCls, variant, pick,
+  title, icon, headCls, variant, pick, focused,
 }: {
   title: string;
   icon: string;
   headCls: string;
   variant: 'NEW' | 'RANK_UP' | 'RANK_DOWN' | 'SCORE_UP';
   pick: KeyPick;
+  focused?: boolean; // v0.3-12: ?focus=... 로 강조 대상이면 true
 }) {
   const noteByVariant: Record<typeof variant, string> = {
     NEW: '오늘 후보에 새로 들어온 종목 중 가장 점수가 높은 종목입니다. 관찰 후보이며 매수 권유가 아닙니다.',
@@ -668,9 +714,10 @@ function HighlightCard({
   };
 
   const { row } = pick;
+  const ringCls = focused ? 'ring-2 ring-indigo-400 ring-offset-1' : '';
 
   return (
-    <div className="rounded-md border border-slate-200 bg-white shadow-sm">
+    <div className={`rounded-md border border-slate-200 bg-white shadow-sm ${ringCls}`}>
       <div className={`flex items-baseline justify-between gap-2 rounded-t-md border-b px-3 py-2 ${headCls}`}>
         <span className="text-sm font-semibold">{icon} {title}</span>
         {row && pick.metricLabel && (

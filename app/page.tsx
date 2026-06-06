@@ -535,6 +535,7 @@ function ChangeHighlightBox({
                 : (picks.topNew?.today_rank != null ? `현재 순위 ${fmtRankSimple(picks.topNew.today_rank)}` : '')
             }
             reason="신규진입 종목 중 최고 점수"
+            detailHref="/changes?focus=new"
           />
           <MiniHighlight
             label="최대 순위상승"
@@ -547,6 +548,7 @@ function ChangeHighlightBox({
                 : ''
             }
             reason="후보 순위 개선폭 1위"
+            detailHref="/changes?focus=up"
           />
           <MiniHighlight
             label="최대 순위하락"
@@ -559,6 +561,7 @@ function ChangeHighlightBox({
                 : ''
             }
             reason="후보 순위 하락폭 1위"
+            detailHref="/changes?focus=down"
           />
           <MiniHighlight
             label="최대 점수상승"
@@ -571,6 +574,7 @@ function ChangeHighlightBox({
                 : ''
             }
             reason="스캐너 점수 상승폭 1위"
+            detailHref="/changes?focus=score"
           />
         </div>
       )}
@@ -583,7 +587,7 @@ function ChangeHighlightBox({
 }
 
 function MiniHighlight({
-  label, icon, tone, row, metric, reason,
+  label, icon, tone, row, metric, reason, detailHref,
 }: {
   label: string;
   icon: string;
@@ -591,6 +595,7 @@ function MiniHighlight({
   row: ChangeRowLite | null;
   metric: string;
   reason: string;   // v0.3-11: "선정 이유" 카드 하단 한 줄 (row 있을 때만 노출)
+  detailHref: string; // v0.3-12: 카드 헤더 클릭 시 /changes?focus=... 이동
 }) {
   const toneCls =
     tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' :
@@ -599,9 +604,16 @@ function MiniHighlight({
                        'border-indigo-200 bg-indigo-50 text-indigo-900';
   return (
     <div className={`rounded border p-2 ${toneCls}`}>
-      <div className="text-[10px] font-medium opacity-80">
-        {icon} {label}
-      </div>
+      {/* v0.3-12: 카드 헤더(아이콘 + 라벨) 자체를 /changes?focus=... 로 가는 Link로 만든다.
+          종목명 Link 와 nesting 안 되도록 카드 헤더만 Link 처리. */}
+      <Link
+        href={detailHref}
+        className="flex items-center justify-between gap-1 text-[10px] font-medium opacity-80 hover:underline hover:opacity-100"
+        title="자세히 보기 → /changes"
+      >
+        <span>{icon} {label}</span>
+        <span className="text-[10px] opacity-70" aria-hidden>→</span>
+      </Link>
       {row == null ? (
         <div className="mt-1 text-xs text-slate-500">해당 없음</div>
       ) : (
