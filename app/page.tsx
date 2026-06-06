@@ -534,6 +534,7 @@ function ChangeHighlightBox({
                 ? `현재 점수 ${fmtScoreSimple(picks.topNew.today_score)}`
                 : (picks.topNew?.today_rank != null ? `현재 순위 ${fmtRankSimple(picks.topNew.today_rank)}` : '')
             }
+            reason="신규진입 종목 중 최고 점수"
           />
           <MiniHighlight
             label="최대 순위상승"
@@ -545,6 +546,7 @@ function ChangeHighlightBox({
                 ? `${fmtRankSimple(picks.topRankUp.yesterday_rank)} → ${fmtRankSimple(picks.topRankUp.today_rank)} · ▲${Math.abs(picks.topRankUp.rank_delta)}`
                 : ''
             }
+            reason="후보 순위 개선폭 1위"
           />
           <MiniHighlight
             label="최대 순위하락"
@@ -556,6 +558,7 @@ function ChangeHighlightBox({
                 ? `${fmtRankSimple(picks.topRankDown.yesterday_rank)} → ${fmtRankSimple(picks.topRankDown.today_rank)} · ▼+${picks.topRankDown.rank_delta}`
                 : ''
             }
+            reason="후보 순위 하락폭 1위"
           />
           <MiniHighlight
             label="최대 점수상승"
@@ -567,6 +570,7 @@ function ChangeHighlightBox({
                 ? `${fmtScoreSimple(picks.topScoreUp.yesterday_score)} → ${fmtScoreSimple(picks.topScoreUp.today_score)} · +${Number(picks.topScoreUp.score_delta).toFixed(1)}`
                 : ''
             }
+            reason="스캐너 점수 상승폭 1위"
           />
         </div>
       )}
@@ -579,13 +583,14 @@ function ChangeHighlightBox({
 }
 
 function MiniHighlight({
-  label, icon, tone, row, metric,
+  label, icon, tone, row, metric, reason,
 }: {
   label: string;
   icon: string;
   tone: 'emerald' | 'sky' | 'amber' | 'indigo';
   row: ChangeRowLite | null;
   metric: string;
+  reason: string;   // v0.3-11: "선정 이유" 카드 하단 한 줄 (row 있을 때만 노출)
 }) {
   const toneCls =
     tone === 'emerald' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' :
@@ -615,6 +620,11 @@ function MiniHighlight({
             <div className="mt-0.5 text-[11px] text-slate-600">
               <span className="text-slate-500">현재단계</span>{' '}
               <span className="font-medium text-slate-800">{row.today_stage}</span>
+            </div>
+          )}
+          {reason && (
+            <div className="mt-1 text-[10px] leading-snug text-slate-500">
+              선정 이유: {reason}
             </div>
           )}
         </>
