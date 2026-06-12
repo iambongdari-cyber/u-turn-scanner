@@ -295,10 +295,64 @@ def _pick_col(cols: list[str], candidates: list[str]) -> str | None:
 
 
 # ── 종목 목록 준비 ───────────────────────────────────────────────
+def fetch_universe_from_db() -> list[dict]:
+    """v0.3-18 hotfix: fdr.StockListing 이 404 등으로 실패하면 DB stocks 테이블에서
+    ticker/name 을 가져와 universe 로 사용한다.
+
+    - 이미 적재된 종목만 대상 (그날 신규 상장 종목은 빠질 수 있음)
+    - 기존 stocks 테이블 데이터는 손대지 않는다 (READ-ONLY).
+    - 호출 실패 시 빈 리스트 반환 (호출자가 안전 처리).
+    """
+    print("[fallback] DB stocks 테이블에서 종목 목록 보강 중…")
+    rows: list[dict] = []
+    offset, PAGE = 0, 1000
+    while True:
+        try:
+            r = requests.get(
+                f"{REST_URL}/stocks",
+                headers={**HEADERS, "Range": f"{offset}-{offset + PAGE - 1}"},
+                params={"select": "ticker,name", "order": "ticker.asc"},
+                timeout=60,
+            )
+        except requests.exceptions.RequestException as e:
+            print(f"[WARN] DB stocks 조회 실패: {e}")
+            break
+        if r.status_code not in (200, 206):
+            print(f"[WARN] DB stocks 응답 코드 {r.status_code}")
+            break
+        page = r.json()
+        if not page:
+            break
+        for row in page:
+            t = row.get('ticker')
+            n = row.get('name') or t
+            if t:
+                rows.append({'ticker': t, 'name': n})
+        if len(page) < PAGE:
+            break
+        offset += PAGE
+    print(f"           DB stocks 에서 {len(rows)}개 ticker 확보")
+    return rows
+
+
 def fetch_universe(market: str) -> list[dict]:
-    """FinanceDataReader 로 한 시장의 보통주 목록을 가져온다."""
+    """FinanceDataReader 로 한 시장의 보통주 목록을 가져온다.
+
+    v0.3-18 hotfix:
+      fdr.StockListing 은 KRX/네이버 페이지 구조 변경 시 HTTP 404 등으로 raise 될 수 있다
+      (pandas.io.common.urlopen 경유 traceback). 그 경우 원래는 main 전체 중단이었지만,
+      이제는 WARN 출력 + 빈 리스트 반환만 한다. 호출자(main)가 prices-only 모드이면
+      DB stocks 테이블 fallback 으로 일봉 갱신을 계속 진행한다.
+      → 분석/필터/적재 로직(스캔/TOP10/백테스트)에는 영향 0.
+    """
     print(f"[목록] {market} 종목 가져오는 중 (FinanceDataReader)…")
-    df = fdr.StockListing(market)
+    try:
+        df = fdr.StockListing(market)
+    except Exception as e:
+        print(f"[WARN] FinanceDataReader StockListing({market}) 실패: {type(e).__name__}: {e}")
+        print( "       → 외부 데이터 소스(KRX/네이버 등) 페이지 구조 변경 가능성.")
+        print( "       → prices-only 모드면 DB stocks 테이블 fallback 으로 진행.")
+        return []
     print(f"       {market} 전체: {len(df)}개")
 
     cols = df.columns.tolist()
@@ -307,7 +361,9 @@ def fetch_universe(market: str) -> list[dict]:
     cap_col = _pick_col(cols, ['Marcap', 'MarketCap', 'Market Cap', 'marcap'])
 
     if not code_col or not name_col:
-        sys.exit(f"StockListing 컬럼 인식 실패. 실제 컬럼: {cols}")
+        print(f"[WARN] StockListing 컬럼 인식 실패. 실제 컬럼: {cols}")
+        print( "       → 외부 사이트 컬럼명 변경 가능성. WARN 후 빈 리스트 반환.")
+        return []
 
     result: list[dict] = []
     n_pref = n_unusual = n_etf = n_bad = 0
@@ -536,6 +592,18 @@ def main():
     universe: list[dict] = []
     for m in markets:
         universe.extend(fetch_universe(m))
+
+    # v0.3-18 hotfix: fdr.StockListing 이 외부 사이트 변경(HTTP 404 등)으로 모두 실패해
+    # universe 가 비어있는 경우, prices-only 모드면 DB stocks 테이블에서 ticker/name 보강.
+    # → 그날 신규 상장 종목은 빠질 수 있지만 기존 종목 일봉 갱신은 막히지 않음.
+    # stocks-only 모드(=stocks 테이블을 새로 채우려는 경우)에는 fallback 적용하지 않는다.
+    if not universe and args.prices_only:
+        print("[WARN] FinanceDataReader 종목 목록이 비어 있음. DB stocks 테이블 fallback 시도.")
+        universe = fetch_universe_from_db()
+        if not universe:
+            print("[ERROR] DB stocks 테이블에서도 종목을 가져오지 못해 prices 적재 단계 진행 불가.")
+            sys.exit(2)
+
     print(f"[합계] 전체 보통주 {len(universe)}개\n")
 
     # 옵션 적용

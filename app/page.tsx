@@ -42,6 +42,17 @@ interface ChangeDumpLite {
   previous_date: string | null;
   yesterday_date: string | null;
   compare_label: string | null;
+  // v0.3-17: 한 줄 요약 박스에서 사용할 카운트 (compare_snapshots.py v0.3-7부터 존재하는 키만 노출 — 새 키 요구 0건)
+  summary?: {
+    n_new_entries?: number;
+    n_departed?: number;
+    n_rank_up?: number;
+    n_rank_down?: number;
+    n_score_up?: number;
+    n_score_down?: number;
+    n_sector_changed?: number;
+    n_total_changes?: number;
+  };
   changes: ChangeRowLite[];
 }
 
@@ -53,6 +64,155 @@ async function loadChangeDumpForHome(): Promise<ChangeDumpLite | null> {
     return d;
   } catch {
     return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.3-19: 판단 보조 카드 — scan_dump_latest.json 추가 fetch
+// candidates_bottom 의 ticker 별 disparity_pct 등을 활용해 "제외 검토" 판정을 정밀화.
+// fetch 실패 시 안전하게 null 반환 (전체 화면 중단 금지).
+// JSON 구조 변경 0건 — 기존 사이드카가 v0.2-1부터 제공하는 키만 사용.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface ScanCandidateLite {
+  ticker: string;
+  close?: number | null;
+  ma60?: number | null;
+  disparity_pct?: number | null;
+  days_below_ma60_60d?: number | null;
+}
+
+interface ScanDumpLite {
+  candidates_bottom?: ScanCandidateLite[];
+}
+
+async function loadScanDumpForJudge(): Promise<Map<string, ScanCandidateLite> | null> {
+  const filePath = path.join(process.cwd(), 'logs', 'sidecar', 'scan_dump_latest.json');
+  try {
+    const buf = await readFile(filePath, 'utf-8');
+    const d = JSON.parse(buf) as ScanDumpLite;
+    const map = new Map<string, ScanCandidateLite>();
+    for (const r of (d.candidates_bottom ?? [])) {
+      if (r && typeof r.ticker === 'string') {
+        map.set(r.ticker, r);
+      }
+    }
+    return map;
+  } catch {
+    // fetch/parse 실패해도 전체 화면 중단 금지 — null 반환 → change_dump 만으로 판정 진행
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.3-19: 판정 4단계 — 사용자 명세 표현 그대로
+// '개선중' / '유지중' / '약화중' / '제외 검토'
+// 보호 원칙: UI 레이어 + 계산 보조 로직만 추가, sidecar JSON 무변경.
+// ─────────────────────────────────────────────────────────────────────────
+
+type Judgement = 'IMPROVING' | 'KEEPING' | 'WEAKENING' | 'EXCLUDE_REVIEW';
+
+const JUDGEMENT_ORDER: Record<Judgement, number> = {
+  IMPROVING: 0,
+  KEEPING: 1,
+  WEAKENING: 2,
+  EXCLUDE_REVIEW: 3,
+};
+
+const JUDGEMENT_LABEL: Record<Judgement, string> = {
+  IMPROVING: '개선중',
+  KEEPING: '유지중',
+  WEAKENING: '약화중',
+  EXCLUDE_REVIEW: '제외 검토',
+};
+
+const JUDGEMENT_ICON: Record<Judgement, string> = {
+  IMPROVING: '🟢',
+  KEEPING: '🔵',
+  WEAKENING: '🟡',
+  EXCLUDE_REVIEW: '🔴',
+};
+
+function judgeRow(
+  row: ChangeRowLite,
+  scanLookup: Map<string, ScanCandidateLite> | null,
+): Judgement {
+  // 1) 제외 검토 우선 — 가장 강한 부정 신호
+  if (row.change_type === 'DEPARTED') return 'EXCLUDE_REVIEW';
+  if (row.today_rank == null && row.yesterday_rank != null) return 'EXCLUDE_REVIEW';
+
+  // scan_dump 보강 — disparity_pct < 0 (60일선 이탈)이면 제외 검토 우선
+  const scan = scanLookup?.get(row.ticker);
+  if (scan && typeof scan.disparity_pct === 'number' && scan.disparity_pct < 0) {
+    return 'EXCLUDE_REVIEW';
+  }
+
+  // 2) 개선중 — 양쪽 모두 좋음 (점수 상승 + 순위 개선 동시)
+  const scoreUp = typeof row.score_delta === 'number' && row.score_delta > 0;
+  const rankUp = typeof row.rank_delta === 'number' && row.rank_delta < 0;
+  if (scoreUp && rankUp) return 'IMPROVING';
+
+  // 3) 약화중 — 한쪽이라도 명확히 악화
+  const SCORE_NEG = -0.5;  // 작은 변동은 노이즈로 간주
+  const scoreDown = typeof row.score_delta === 'number' && row.score_delta <= SCORE_NEG;
+  const rankDown = typeof row.rank_delta === 'number' && row.rank_delta > 0;
+  if (scoreDown || rankDown) return 'WEAKENING';
+
+  // 4) 그 외 — 유지중
+  return 'KEEPING';
+}
+
+function buildChangeNote(row: ChangeRowLite): string {
+  // 어제 대비 변화 자연 문구 (관찰 보조 표현만)
+  const parts: string[] = [];
+  if (typeof row.rank_delta === 'number') {
+    if (row.rank_delta < 0) {
+      parts.push(`순위 ▲${Math.abs(row.rank_delta)}계단`);
+    } else if (row.rank_delta > 0) {
+      parts.push(`순위 ▼${row.rank_delta}계단`);
+    } else {
+      parts.push('순위 변동 없음');
+    }
+  } else if (row.today_rank != null && row.yesterday_rank == null) {
+    parts.push('신규 후보 진입');
+  } else if (row.today_rank == null && row.yesterday_rank != null) {
+    parts.push(`후보권 이탈 (직전 ${row.yesterday_rank}위)`);
+  } else if (row.today_rank == null) {
+    parts.push('순위 정보 없음');
+  }
+
+  if (typeof row.score_delta === 'number') {
+    const sd = Number(row.score_delta);
+    if (sd > 0) parts.push(`점수 +${sd.toFixed(1)}`);
+    else if (sd < 0) parts.push(`점수 ${sd.toFixed(1)}`);
+    else parts.push('점수 변동 없음');
+  }
+
+  return parts.length > 0 ? parts.join(' / ') : '변화 정보 없음';
+}
+
+function buildJudgementNote(j: Judgement, row: ChangeRowLite): string {
+  // 판정 한 줄 설명 — 관찰 보조 표현만, 매수/매도 권유 0건
+  switch (j) {
+    case 'IMPROVING':
+      return '순위·점수 모두 개선 — 관심 강화 신호로 다시 확인할 후보.';
+    case 'KEEPING':
+      return '변화가 크지 않거나 한쪽만 개선 — 기존 관찰 흐름 유지 권장.';
+    case 'WEAKENING': {
+      const partsHint: string[] = [];
+      if (typeof row.rank_delta === 'number' && row.rank_delta > 0) partsHint.push('순위 악화');
+      if (typeof row.score_delta === 'number' && row.score_delta <= -0.5) partsHint.push('점수 하락');
+      const reason = partsHint.length > 0 ? partsHint.join(' · ') : '한쪽 지표 약화';
+      return `${reason} — 추가 확인 필요 (매도 권유 아님, 복기 보조).`;
+    }
+    case 'EXCLUDE_REVIEW':
+      if (row.change_type === 'DEPARTED') {
+        return '오늘 후보권에서 이탈 — 제외 여부 다시 점검 (매도 권유 아님).';
+      }
+      if (row.today_rank == null) {
+        return '오늘 후보권 외 — 관찰 우선순위에서 한 단계 내릴지 검토.';
+      }
+      return '60일선 이탈 신호 (disparity 음수) — 제외 검토 필요.';
   }
 }
 
@@ -121,21 +281,26 @@ interface HomeSecondLookPicks {
   topUTurnStrong: ChangeRowLite | null;  // ③ U턴 시도 강화
 }
 
-function pickHomeSecondLook(rows: ChangeRowLite[] | undefined): HomeSecondLookPicks {
+function pickHomeSecondLook(
+  rows: ChangeRowLite[] | undefined,
+  excludeTickers: Set<string> = new Set(),  // v0.3-16: 5 카드에 이미 노출된 ticker 들을 미리 제외
+): HomeSecondLookPicks {
   if (!rows || rows.length === 0) {
     return { topConsistent: null, topMomentum: null, topUTurnStrong: null };
   }
 
-  // ① TOP10 유지 + 점수 상승
+  // ① TOP10 유지 + 점수 상승 (v0.3-16: excludeTickers 미리 제외)
   const consistent = [...rows]
     .filter((r) =>
-      typeof r.today_rank === 'number' && (r.today_rank as number) <= 10
+      !excludeTickers.has(r.ticker)
+      && typeof r.today_rank === 'number' && (r.today_rank as number) <= 10
       && typeof r.score_delta === 'number' && (r.score_delta as number) > 0,
     )
     .sort((a, b) => (b.score_delta as number) - (a.score_delta as number))[0]
     ?? null;
 
-  const used = new Set<string>();
+  // v0.3-16: used 초기값 = excludeTickers (5 카드 + 내부 회피 누적)
+  const used = new Set<string>(excludeTickers);
   if (consistent) used.add(consistent.ticker);
 
   // ② 순위 상승 + 점수 상승 동시 (rank_delta 가장 음수 + score_delta 보조)
@@ -198,8 +363,25 @@ export default async function Home() {
   const changeDump = await loadChangeDumpForHome();
   const keyPicks = pickHomeKeyChanges(changeDump?.changes);
 
+  // v0.3-16: 5 카드에 이미 노출된 종목 ticker 5개를 모아 excludeTickers 로 만든다.
+  // → 3 카드 픽에서 미리 제외해 같은 종목이 두 영역에 동시 노출되는 것을 막는다.
+  const excludeTickers = new Set<string>(
+    [
+      keyPicks.topNew?.ticker,
+      keyPicks.topRankUp?.ticker,
+      keyPicks.topRankDown?.ticker,
+      keyPicks.topScoreUp?.ticker,
+      keyPicks.topDeparted?.ticker,
+    ].filter((t): t is string => !!t),
+  );
+
   // v0.3-15: "오늘 다시 볼 후보" 3 카드 픽 (확인 우선순위 참고용)
-  const secondLookPicks = pickHomeSecondLook(changeDump?.changes);
+  // v0.3-16: excludeTickers 를 미리 제외 (5 카드와 다른 종목으로 후보 선정)
+  const secondLookPicks = pickHomeSecondLook(changeDump?.changes, excludeTickers);
+
+  // v0.3-19: scan_dump_latest.json 추가 fetch — disparity_pct < 0 (60일선 이탈) 보강용.
+  // fetch 실패해도 null 반환 → change_dump 만으로 판정 진행 (전체 화면 중단 금지).
+  const scanLookup = await loadScanDumpForJudge();
 
   return (
     <main className="container mx-auto max-w-3xl p-6 sm:p-8">
@@ -215,11 +397,14 @@ export default async function Home() {
 
       <SidecarFreshnessBox freshness={freshness} />
 
+      {/* v0.3-17: 첫 화면에서 핵심 정보를 한눈에 — 카운트 5 + 강한 후보 + 기준일 */}
+      <TodaySummaryLineBox dump={changeDump} secondLookPicks={secondLookPicks} />
+
       <HomeSummaryCard summary={homeSummary} />
 
       <ChangeHighlightBox dump={changeDump} picks={keyPicks} />
 
-      <SecondLookSection dump={changeDump} picks={secondLookPicks} />
+      <SecondLookSection dump={changeDump} picks={secondLookPicks} scanLookup={scanLookup} />
 
       <SearchForm defaultDate={latestDaily?.base_date} />
 
@@ -751,8 +936,12 @@ function MiniHighlight({
 // ─────────────────────────────────────────────────────────────────────────
 
 function SecondLookSection({
-  dump, picks,
-}: { dump: ChangeDumpLite | null; picks: HomeSecondLookPicks }) {
+  dump, picks, scanLookup,
+}: {
+  dump: ChangeDumpLite | null;
+  picks: HomeSecondLookPicks;
+  scanLookup: Map<string, ScanCandidateLite> | null;   // v0.3-19: 판정 보강용
+}) {
   // change_dump 자체가 부재이거나 status 정상이 아니면 본 영역은 표시하지 않는다
   // (홈 박스 v0.3-10/14가 이미 안내를 처리).
   if (!dump || dump.status !== 'ok') return null;
@@ -761,6 +950,58 @@ function SecondLookSection({
   const allEmpty =
     !picks.topConsistent && !picks.topMomentum && !picks.topUTurnStrong;
   if (allEmpty) return null;
+
+  // v0.3-19: 3 카드 메타 정의 + 판정 계산
+  type CardSpec = {
+    order: string;
+    label: string;
+    tone: 'emerald' | 'sky' | 'indigo';
+    row: ChangeRowLite | null;
+    reason: string;
+    metricKind: 'CONSISTENT' | 'MOMENTUM' | 'UTURN';
+    detailHref: string;
+  };
+  const specs: CardSpec[] = [
+    {
+      order: '①',
+      label: '강세 지속',
+      tone: 'emerald',
+      row: picks.topConsistent,
+      reason: '이미 상위권인데 점수가 더 오른 종목 — 강세 지속을 다시 확인할 후보입니다.',
+      metricKind: 'CONSISTENT',
+      detailHref: '/changes?focus=score',
+    },
+    {
+      order: '②',
+      label: '다방면 개선',
+      tone: 'sky',
+      row: picks.topMomentum,
+      reason: '순위와 점수가 함께 개선된 종목 — 다방면 신호 정렬, 다시 볼 후보입니다.',
+      metricKind: 'MOMENTUM',
+      detailHref: '/changes?focus=up',
+    },
+    {
+      order: '③',
+      label: 'U턴 시도 강화',
+      tone: 'indigo',
+      row: picks.topUTurnStrong,
+      reason: 'U턴 시도 단계 + 직전 대비 점수 상승 — 단계 진행과 점수 강화를 함께 확인할 후보입니다.',
+      metricKind: 'UTURN',
+      detailHref: '/changes?focus=score',
+    },
+  ];
+
+  // v0.3-19: 판정 + 정렬 (개선중 → 유지중 → 약화중 → 제외 검토)
+  // row 가 null 인 카드는 판정을 'KEEPING' 로 두되, 정렬에서 뒤로 보낸다(가장 우선순위 낮음 = 9).
+  const enriched = specs.map((s) => {
+    const j: Judgement | null = s.row ? judgeRow(s.row, scanLookup) : null;
+    return { spec: s, judgement: j };
+  });
+  enriched.sort((a, b) => {
+    const oa = a.judgement == null ? 9 : JUDGEMENT_ORDER[a.judgement];
+    const ob = b.judgement == null ? 9 : JUDGEMENT_ORDER[b.judgement];
+    return oa - ob;
+  });
 
   return (
     <section className="mb-4 rounded-md border border-amber-200 bg-white p-3 shadow-sm">
@@ -776,36 +1017,32 @@ function SecondLookSection({
       <p className="mb-3 text-[11px] leading-snug text-amber-800">
         오늘 변화 중 특히 다시 확인할 가치가 있는 종목입니다.
         매수 추천이 아니라 확인 우선순위 참고용입니다.
+        {/* v0.3-16: 5 카드 ↔ 3 카드 중복 제거 안내 (사용자 명세 그대로) */}
+        <br />
+        <span className="text-[10px] text-amber-700">위 변화 카드에 없는 종목 중 추가로 확인할 후보입니다.</span>
+        {/* v0.3-19: 판정 안내 */}
+        <br />
+        <span className="text-[10px] text-amber-700">
+          판정은 직전 스냅샷 대비 순위·점수 변화 근사입니다 (개선중 → 유지중 → 약화중 → 제외 검토 순 표시).
+        </span>
       </p>
 
       <div className="grid grid-cols-1 gap-2">
-        <SecondLookCard
-          order="①"
-          label="강세 지속"
-          tone="emerald"
-          row={picks.topConsistent}
-          reason="이미 상위권인데 점수가 더 오른 종목 — 강세 지속을 다시 확인할 후보입니다."
-          metricKind="CONSISTENT"
-          detailHref="/changes?focus=score"
-        />
-        <SecondLookCard
-          order="②"
-          label="다방면 개선"
-          tone="sky"
-          row={picks.topMomentum}
-          reason="순위와 점수가 함께 개선된 종목 — 다방면 신호 정렬, 다시 볼 후보입니다."
-          metricKind="MOMENTUM"
-          detailHref="/changes?focus=up"
-        />
-        <SecondLookCard
-          order="③"
-          label="U턴 시도 강화"
-          tone="indigo"
-          row={picks.topUTurnStrong}
-          reason="U턴 시도 단계 + 직전 대비 점수 상승 — 단계 진행과 점수 강화를 함께 확인할 후보입니다."
-          metricKind="UTURN"
-          detailHref="/changes?focus=score"
-        />
+        {enriched.map(({ spec, judgement }) => (
+          <SecondLookCard
+            key={spec.label}
+            order={spec.order}
+            label={spec.label}
+            tone={spec.tone}
+            row={spec.row}
+            reason={spec.reason}
+            metricKind={spec.metricKind}
+            detailHref={spec.detailHref}
+            judgement={judgement}
+            changeNote={spec.row ? buildChangeNote(spec.row) : ''}
+            judgementNote={spec.row && judgement ? buildJudgementNote(judgement, spec.row) : ''}
+          />
+        ))}
       </div>
 
       <p className="mt-2 text-[10px] leading-snug text-slate-500">
@@ -818,6 +1055,7 @@ function SecondLookSection({
 
 function SecondLookCard({
   order, label, tone, row, reason, metricKind, detailHref,
+  judgement, changeNote, judgementNote,
 }: {
   order: string;
   label: string;
@@ -826,6 +1064,9 @@ function SecondLookCard({
   reason: string;
   metricKind: 'CONSISTENT' | 'MOMENTUM' | 'UTURN';
   detailHref: string;
+  judgement: Judgement | null;        // v0.3-19: 판정 4단계 (null = 해당 없음)
+  changeNote: string;                  // v0.3-19: 어제 대비 변화 자연 문구
+  judgementNote: string;               // v0.3-19: 판정 한 줄 설명
 }) {
   const toneCls =
     tone === 'emerald' ? 'border-emerald-200 bg-emerald-50' :
@@ -839,8 +1080,12 @@ function SecondLookCard({
   return (
     <div className={`rounded border p-2.5 ${toneCls}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className={`text-[11px] font-semibold ${headTextCls}`}>
-          {order} {label}
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className={`text-[11px] font-semibold ${headTextCls}`}>
+            {order} {label}
+          </span>
+          {/* v0.3-19: 판정 뱃지 — 우상단(라벨 우측). row 없으면 미렌더. */}
+          {judgement && row && <JudgementBadge judgement={judgement} />}
         </div>
         <Link
           href={detailHref}
@@ -913,9 +1158,22 @@ function SecondLookCard({
             </div>
           )}
 
-          <p className="mt-1.5 text-[10px] leading-snug text-slate-600">
-            이유: {reason}
+          {/* v0.3-19: 어제 대비 변화 + 판정 한 줄 영역 (row 있을 때만) */}
+          {changeNote && (
+            <p className="mt-1.5 text-[11px] leading-snug text-slate-700">
+              <span className="text-slate-500">📊 어제 대비 변화:</span>{' '}
+              <span className="tabular-nums">{changeNote}</span>
+            </p>
+          )}
+          <p className="mt-1 text-[10px] leading-snug text-slate-600">
+            💡 유지 이유: {reason}
           </p>
+          {judgementNote && judgement && (
+            <p className="mt-1 text-[11px] leading-snug text-slate-700">
+              <span className="font-medium">{JUDGEMENT_ICON[judgement]} 판정:</span>{' '}
+              <span className="text-slate-700">{judgementNote}</span>
+            </p>
+          )}
 
           <div className="mt-1 text-right">
             <Link
@@ -928,5 +1186,104 @@ function SecondLookCard({
         </>
       )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.3-19: 판정 뱃지 — 🟢 개선중 / 🔵 유지중 / 🟡 약화중 / 🔴 제외 검토
+// ─────────────────────────────────────────────────────────────────────────
+function JudgementBadge({ judgement }: { judgement: Judgement }) {
+  const cls =
+    judgement === 'IMPROVING'      ? 'border-emerald-300 bg-emerald-100 text-emerald-900' :
+    judgement === 'KEEPING'        ? 'border-sky-300 bg-sky-100 text-sky-900' :
+    judgement === 'WEAKENING'      ? 'border-amber-300 bg-amber-100 text-amber-900' :
+                                     'border-red-300 bg-red-100 text-red-900';
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${cls}`}
+      title={`판정: ${JUDGEMENT_LABEL[judgement]}`}
+    >
+      <span aria-hidden>{JUDGEMENT_ICON[judgement]}</span>
+      <span>{JUDGEMENT_LABEL[judgement]}</span>
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.3-17: "✨ 오늘 한 줄 요약" 박스 (D-1)
+// 첫 화면에 핵심 정보를 한눈에 노출하기 위한 컴팩트 박스.
+// 이미 계산된 값만 재사용:
+//   - changeDump.summary  (compare_snapshots.py v0.3-7부터 존재하는 키)
+//   - secondLookPicks     (v0.3-15/16에서 이미 계산된 3 후보 픽)
+// 새 fetch / 헬퍼 / JSON 키 요구 0건. 분석 로직 변경 0건.
+// ─────────────────────────────────────────────────────────────────────────
+
+function TodaySummaryLineBox({
+  dump, secondLookPicks,
+}: { dump: ChangeDumpLite | null; secondLookPicks: HomeSecondLookPicks }) {
+  // 데이터가 없거나 status 정상이 아니면 박스 자체 미렌더.
+  // (SidecarFreshnessBox / HomeSummaryCard 가 이미 안내를 처리하고 있음)
+  if (!dump || dump.status !== 'ok') return null;
+  const s = dump.summary;
+  if (!s) return null;
+
+  // 강한 후보 = 3 카드 종목명 (truthy 만 모음)
+  const strongCandidates = [
+    secondLookPicks.topConsistent?.name,
+    secondLookPicks.topMomentum?.name,
+    secondLookPicks.topUTurnStrong?.name,
+  ].filter((n): n is string => !!n);
+
+  const previousDate = dump.previous_date ?? dump.yesterday_date;
+  const compareLabel = dump.compare_label
+    ?? (dump.today_date && previousDate ? `${dump.today_date} vs ${previousDate}` : dump.today_date);
+
+  return (
+    <section className="mb-4 rounded-md border border-amber-200 bg-amber-50/40 p-3 shadow-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h2 className="text-sm font-semibold text-amber-900">
+          ✨ 오늘 한 줄 요약
+        </h2>
+        {compareLabel && (
+          <div className="text-[11px] tabular-nums text-amber-700">
+            기준일 <span className="text-amber-900">{dump.today_date ?? '-'}</span>
+            {previousDate && (
+              <> · 비교 <span className="text-amber-900">{previousDate}</span></>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 카운트 한 줄 */}
+      <p className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px] tabular-nums text-slate-700">
+        <span><span className="text-slate-500">신규</span> <strong className="text-slate-800">{(s.n_new_entries ?? 0).toLocaleString()}</strong></span>
+        <span className="text-slate-300">·</span>
+        <span><span className="text-slate-500">순위↑</span> <strong className="text-slate-800">{(s.n_rank_up ?? 0).toLocaleString()}</strong></span>
+        <span className="text-slate-300">·</span>
+        <span><span className="text-slate-500">순위↓</span> <strong className="text-slate-800">{(s.n_rank_down ?? 0).toLocaleString()}</strong></span>
+        <span className="text-slate-300">·</span>
+        <span><span className="text-slate-500">점수↑</span> <strong className="text-slate-800">{(s.n_score_up ?? 0).toLocaleString()}</strong></span>
+        <span className="text-slate-300">·</span>
+        <span><span className="text-slate-500">이탈</span> <strong className="text-slate-800">{(s.n_departed ?? 0).toLocaleString()}</strong></span>
+      </p>
+
+      {/* 강한 후보 한 줄 (3 카드 종목명 truthy 만) */}
+      {strongCandidates.length > 0 && (
+        <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-[12px] text-slate-700">
+          <span className="text-slate-500">강한 후보:</span>
+          <span className="font-medium text-slate-800">{strongCandidates.join(' · ')}</span>
+          <Link
+            href="/changes"
+            className="ml-auto text-[11px] text-blue-700 hover:underline"
+          >
+            자세히 보기 →
+          </Link>
+        </p>
+      )}
+
+      <p className="mt-1.5 text-[10px] leading-snug text-amber-700">
+        한눈에 보기 위한 요약입니다. 매수 추천이 아니라 관찰 보조 정보이며, 자세한 내용은 아래 카드와 /changes 화면에서 확인하세요.
+      </p>
+    </section>
   );
 }
