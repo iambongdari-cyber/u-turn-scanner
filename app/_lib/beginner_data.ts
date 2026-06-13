@@ -9,6 +9,13 @@ import { readFile, readdir, stat } from 'fs/promises';
 import path from 'path';
 import { BeginnerRow } from './beginner';
 import { computeUrgency, selectTradePlanTargets, TodayBriefItem } from './today_brief';
+import {
+  judgeMarketRegime,
+  MarketRegimeResult,
+  ScanMarketRaw,
+  ScanSummaryRaw,
+  SectorRegimeRaw,
+} from './market_regime';
 
 interface CandidateBottomRaw {
   ticker: string;
@@ -40,6 +47,8 @@ interface CandidateBottomRaw {
 interface ScanDumpRaw {
   base_date?: string | null;
   candidates_bottom?: CandidateBottomRaw[];
+  market?: ScanMarketRaw | null;
+  summary?: ScanSummaryRaw | null;
 }
 
 interface SectorMemberRaw {
@@ -60,6 +69,7 @@ interface SectorGroupRaw {
 interface SectorDumpRaw {
   sectors_strong?: SectorGroupRaw[];
   sectors_weak?: SectorGroupRaw[];
+  market_flow?: string | null;
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -130,6 +140,8 @@ export interface BeginnerDataBundle {
   requestedDate: string | null;
   /** 실제 로드된 sidecar 의 base_date 와 동일 (= 표시 기준일) */
   effectiveDate: string | null;
+  /** v0.5 시장 상태 판단 결과. 데이터 부족 시 UNKNOWN 으로 채워짐. */
+  marketRegime: MarketRegimeResult;
 }
 
 export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundle> {
@@ -207,6 +219,19 @@ export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundl
 
   const rows = Array.from(rowsMap.values());
 
+  // v0.5 시장 상태 판단
+  const marketRegime = judgeMarketRegime({
+    market: scan?.market ?? null,
+    summary: scan?.summary ?? null,
+    sector: sector
+      ? {
+          market_flow: sector.market_flow ?? null,
+          sectors_strong: sector.sectors_strong as SectorRegimeRaw['sectors_strong'],
+          sectors_weak: sector.sectors_weak as SectorRegimeRaw['sectors_weak'],
+        }
+      : null,
+  });
+
   return {
     base_date: scan?.base_date ?? date ?? null,
     rows,
@@ -216,6 +241,7 @@ export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundl
     priceByTicker,
     requestedDate: date ?? null,
     effectiveDate: scan?.base_date ?? date ?? null,
+    marketRegime,
   };
 }
 

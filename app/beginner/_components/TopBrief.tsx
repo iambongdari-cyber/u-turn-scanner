@@ -25,6 +25,8 @@ interface Props {
   priceByTicker: Record<string, number>;
   previousJudgementByTicker?: Record<string, ActionRecommend>;
   baseDate: string | null;
+  /** v0.5 전략 모드 (AGGRESSIVE / SELECTIVE / DEFENSIVE) — undefined 시 SELECTIVE */
+  regimeMode?: 'AGGRESSIVE' | 'SELECTIVE' | 'DEFENSIVE';
 }
 
 interface BriefState {
@@ -49,7 +51,7 @@ const EMPTY_BRIEF: TodayBrief = {
 };
 
 export default function TopBrief({
-  rows, priceByTicker, previousJudgementByTicker, baseDate,
+  rows, priceByTicker, previousJudgementByTicker, baseDate, regimeMode,
 }: Props) {
   const [state, setState] = useState<BriefState>({
     brief: EMPTY_BRIEF,
@@ -74,7 +76,7 @@ export default function TopBrief({
       const reservedItems = briefItems.filter(i => i.urgency.kind === 'RESERVED');
       const holdingItems = briefItems.filter(i => i.urgency.kind === 'HOLDING');
       const hasHoldingOrReserved = reservedItems.length + holdingItems.length > 0;
-      const selectedNewTargets = selectTradePlanTargets(newItems, hasHoldingOrReserved);
+      const selectedNewTargets = selectTradePlanTargets(newItems, hasHoldingOrReserved, regimeMode);
       const interestCount = newItems.filter(i => i.urgency.level === 'INTEREST').length;
       const brief = buildTodayBrief({
         selectedNewTargets,
@@ -91,7 +93,7 @@ export default function TopBrief({
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadKey, rows, priceByTicker, previousJudgementByTicker]);
+  }, [reloadKey, rows, priceByTicker, previousJudgementByTicker, regimeMode]);
 
   // 자식 컴포넌트에서 상태 변경 시 recompute
   // (현재 미사용 — MyPlansSection 안의 storage event 가 자동 처리)

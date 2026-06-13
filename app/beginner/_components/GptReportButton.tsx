@@ -7,15 +7,18 @@ import { loadAllPlans } from '../../_lib/trade_storage';
 import { buildGptReport, buildAll } from '../../_lib/gpt_report';
 import { BeginnerRow } from '../../_lib/beginner';
 import { ActionRecommend } from '../../_lib/trade_plan';
+import { MarketRegimeResult } from '../../_lib/market_regime';
 
 interface Props {
   base_date: string | null;
   rows: BeginnerRow[];
   priceByTicker: Record<string, number>;
   previousJudgementByTicker?: Record<string, ActionRecommend>;
+  /** v0.5 시장 상태 결과 — 리포트 §0 + §1 헤드라인 톤에 반영 */
+  marketRegime?: MarketRegimeResult | null;
 }
 
-export default function GptReportButton({ base_date, rows, priceByTicker, previousJudgementByTicker }: Props) {
+export default function GptReportButton({ base_date, rows, priceByTicker, previousJudgementByTicker, marketRegime }: Props) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [markdown, setMarkdown] = useState('');
@@ -43,6 +46,7 @@ export default function GptReportButton({ base_date, rows, priceByTicker, previo
       brief,
       briefItems,
       selectedNewTargets,
+      marketRegime,
     });
     setMarkdown(md);
     setOpen(true);

@@ -19,6 +19,7 @@ import MyPlansSection from './_components/MyPlansSection';
 import CollapsibleCandidates from './_components/CollapsibleCandidates';
 import MissedReportsBox from './_components/MissedReportsBox';
 import GptReportButton from './_components/GptReportButton';
+import MarketRegimeBox from './_components/MarketRegimeBox';
 
 export const dynamic = 'force-dynamic';
 
@@ -109,12 +110,16 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
         requestedDate={requestedDate ?? null}
       />
 
-      {/* 1~3. 오늘 결론 + 오늘 할 일 + 꼭 보세요 */}
+      {/* v0.5 신규: 오늘 시장 상태 박스 */}
+      <MarketRegimeBox regime={data.marketRegime} />
+
+      {/* 1~2. 오늘 결론 + 매매계획 기록하기 */}
       <TopBrief
         rows={data.rows}
         priceByTicker={priceByTicker}
         previousJudgementByTicker={previousJudgementByTicker}
         baseDate={data.base_date}
+        regimeMode={data.marketRegime?.mode}
       />
 
       {/* 4. 내 예약매수 대기 + 5. 내 보유종목 점검 */}
@@ -149,6 +154,7 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
             rows={data.rows}
             priceByTicker={priceByTicker}
             previousJudgementByTicker={previousJudgementByTicker}
+            marketRegime={data.marketRegime}
           />
         </div>
       </section>

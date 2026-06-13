@@ -325,9 +325,13 @@ export interface TodayBriefItem {
   currentPrice?: number | null;
 }
 
+/** v0.5 전략 모드 — 외부 import 회피를 위해 string union 으로 받음 */
+export type SelectRegimeMode = 'AGGRESSIVE' | 'SELECTIVE' | 'DEFENSIVE';
+
 export function selectTradePlanTargets(
   newItems: TodayBriefItem[],
   hasHoldingOrReserved: boolean,
+  regimeMode?: SelectRegimeMode,
 ): TodayBriefItem[] {
   // TODAY 또는 URGENT 등급의 신규 후보만 후보
   const pool = newItems.filter(i =>
@@ -336,6 +340,9 @@ export function selectTradePlanTargets(
     i.row
   );
   if (pool.length === 0) return [];
+
+  // v0.5 모드별 가중치 분기
+  const mode: SelectRegimeMode = regimeMode ?? 'SELECTIVE';
 
   // 점수: URGENT > TODAY, U턴 충족 + 위험 낮음 + 거래대금 회복 + 60일선
   const scored = pool.map(it => {
@@ -348,21 +355,45 @@ export function selectTradePlanTargets(
     if (it.row?.checks?.above_ma60) score += 3;
     if (it.row?.disparity_pct != null && it.row.disparity_pct < 5) score += 3;
     if (v.ai_judgement === 'BUY') score += 5;
-    return { item: it, score, uturn: v.uturn_passed, risk: v.risk };
-  }).sort((a, b) => b.score - a.score);
 
-  // 보유/예약 있으면 최대 1개
-  if (hasHoldingOrReserved) {
-    return scored.length > 0 ? [scored[0].item] : [];
+    // ── v0.5 모드별 분기
+    if (mode === 'AGGRESSIVE') {
+      // 강세장: 주도주 +10, 후발 +5, 추격 위험 종목(이격 ≥12%) 강한 감점
+      if (v.category === 'CURRENT_LEADER') score += 10;
+      else if (v.category === 'LATE_STRONG') score += 5;
+      if (it.row?.disparity_pct != null && it.row.disparity_pct >= 12) score -= 20;
+    } else if (mode === 'SELECTIVE') {
+      // 보합장: 거래대금 회복 가중 + 손절가 근거(ma60) 불명확하면 강감점
+      if (it.row?.checks?.value_recovering) score += 10;
+      if (it.row?.ma60 == null) score -= 50;
+    } else if (mode === 'DEFENSIVE') {
+      // 약세장: 신규 후보 전체 감점 — 보유/예약 우선 (자연스럽게 1개 이하로 줄어듦)
+      score -= 20;
+    }
+
+    return { item: it, score, uturn: v.uturn_passed, risk: v.risk };
+  })
+  .filter(s => s.score >= 0) // 모드 분기로 score 가 0 미만이면 사실상 제외
+  .sort((a, b) => b.score - a.score);
+
+  if (scored.length === 0) return [];
+
+  // v0.5 모드별 캡
+  // - DEFENSIVE: 최대 1개
+  // - SELECTIVE: 최대 1개 (사용자 명세 §보합장 "1순위만")
+  // - AGGRESSIVE: 보유/예약 없으면 최대 3 (veryStrong 분기), 있으면 최대 1
+  if (mode === 'DEFENSIVE' || mode === 'SELECTIVE') {
+    return [scored[0].item];
   }
 
-  // 아주 강한 후보 — U턴 5/5 + 위험 낮음 인 경우만 최대 3개
+  // AGGRESSIVE
+  if (hasHoldingOrReserved) {
+    return [scored[0].item];
+  }
   const veryStrong = scored.filter(s => s.uturn >= 5 && s.risk === 'LOW');
   if (veryStrong.length >= 2) {
     return veryStrong.slice(0, 3).map(s => s.item);
   }
-
-  // 기본 1개
   return [scored[0].item];
 }
 

@@ -29,6 +29,7 @@ import {
   selectTradePlanTargets,
   buildTodayBrief,
 } from './today_brief';
+import { MarketRegimeResult, regimeReportLines } from './market_regime';
 
 export interface GptReportInput {
   base_date: string | null;
@@ -39,6 +40,8 @@ export interface GptReportInput {
   brief: TodayBrief;
   briefItems: TodayBriefItem[];
   selectedNewTargets: TodayBriefItem[];
+  /** v0.5 시장 상태 결과 */
+  marketRegime?: MarketRegimeResult | null;
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -50,7 +53,10 @@ export function buildGptReport(input: GptReportInput): string {
   parts.push(`> 생성일: ${input.base_date ?? '-'} — ${AI_DISCLAIMER}`);
   parts.push('');
 
-  parts.push(section1Todo(input.brief));
+  // v0.5 §0 오늘 시장 상태 (전략 모드)
+  parts.push(section0MarketRegime(input.marketRegime ?? null));
+
+  parts.push(section1Todo(input.brief, input.marketRegime ?? null));
   parts.push(section2NewTargets(input.selectedNewTargets, input.currentPriceByTicker));
   parts.push(section3Holding(input.plans, input.currentPriceByTicker));
   parts.push(section4Reserved(input.plans, input.currentPriceByTicker));
@@ -67,11 +73,27 @@ export function buildGptReport(input: GptReportInput): string {
 // ───────────────────────────────────────────────────────────────
 // §1 오늘 할 일
 // ───────────────────────────────────────────────────────────────
-function section1Todo(brief: TodayBrief): string {
+function section0MarketRegime(regime: MarketRegimeResult | null): string {
   const out: string[] = [];
-  out.push(`## 1. 오늘 할 일`);
+  out.push(`## 0. 오늘 시장 상태`);
+  for (const line of regimeReportLines(regime)) out.push(line);
+  return out.join('\n');
+}
+
+function section1Todo(brief: TodayBrief, regime: MarketRegimeResult | null): string {
+  const out: string[] = [];
+  out.push(`\n## 1. 오늘 할 일`);
+
+  // v0.5 모드별 헤드라인 톤 분기
+  const tone =
+    regime?.mode === 'AGGRESSIVE' ? '오늘은 강세장 흐름이지만 추격매수는 피하세요.' :
+    regime?.mode === 'DEFENSIVE' ? '오늘은 보유 점검이 우선입니다. 신규 진입은 보수적으로.' :
+    regime?.mode === 'SELECTIVE' ? '오늘은 후보를 좁혀 1순위만 확인하세요.' :
+    null;
+
   if (brief.headlineTodoCount === 0) {
     out.push('오늘은 꼭 해야 할 매매 액션이 없습니다.');
+    if (tone) out.push(`> ${tone}`);
     out.push('- [ ] 후보 전체 훑지 않기');
     out.push('- [ ] 손절가 없이 예약매수 넣지 않기');
     return out.join('\n');
@@ -79,6 +101,7 @@ function section1Todo(brief: TodayBrief): string {
   const top1 = brief.todoActions.filter(a => a.priority === 'top1');
   const secondary = brief.todoActions.filter(a => a.priority === 'secondary');
   out.push('오늘 1순위 할 일은 이것입니다.');
+  if (tone) out.push(`> ${tone}`);
   out.push('');
   if (top1.length > 0) {
     out.push('### 1순위');
