@@ -409,6 +409,10 @@ export default async function Home() {
       <SearchForm defaultDate={latestDaily?.base_date} />
 
       <div className="mt-6 space-y-4">
+        <FlowSection title="0) 오늘의 투자판단" desc="퇴근 후 10분, 오늘 볼 종목과 해야 할 행동을 한 화면에 정리합니다 (v0.4).">
+          <FlowLink href="/beginner" emoji="📊" label="오늘의 투자판단" />
+        </FlowSection>
+
         <FlowSection title="1) 오늘 시작" desc="아침에 시장 흐름과 오늘의 후보 등급을 먼저 본다.">
           <FlowLink href="/market" emoji="🗺" label="오늘의 시장 지도" />
           <FlowLink href="/opportunities" emoji="🎯" label="오늘의 기회 포착판" />
