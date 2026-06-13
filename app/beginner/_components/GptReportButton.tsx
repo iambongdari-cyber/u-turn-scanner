@@ -1,10 +1,10 @@
 'use client';
 // app/beginner/_components/GptReportButton.tsx
-// v0.4 클라이언트 — GPT 상담용 리포트 생성/복사 버튼
+// v0.4-2 클라이언트 — 행동 중심 GPT 리포트 생성/복사
 
 import { useState } from 'react';
 import { loadAllPlans } from '../../_lib/trade_storage';
-import { buildGptReport } from '../../_lib/gpt_report';
+import { buildGptReport, buildAll } from '../../_lib/gpt_report';
 import { BeginnerRow } from '../../_lib/beginner';
 import { ActionRecommend } from '../../_lib/trade_plan';
 
@@ -25,12 +25,24 @@ export default function GptReportButton({ base_date, rows, priceByTicker, previo
     const prevMap = previousJudgementByTicker
       ? new Map<string, ActionRecommend>(Object.entries(previousJudgementByTicker))
       : undefined;
+    const plans = loadAllPlans();
+
+    const { briefItems, brief, selectedNewTargets } = buildAll({
+      rows,
+      plans,
+      priceMap,
+      previousJudgementMap: prevMap,
+    });
+
     const md = buildGptReport({
       base_date,
       rows,
-      plans: loadAllPlans(),
+      plans,
       currentPriceByTicker: priceMap,
       previousJudgementByTicker: prevMap,
+      brief,
+      briefItems,
+      selectedNewTargets,
     });
     setMarkdown(md);
     setOpen(true);
@@ -43,7 +55,6 @@ export default function GptReportButton({ base_date, rows, priceByTicker, previo
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // fallback
       const ta = document.createElement('textarea');
       ta.value = markdown;
       document.body.appendChild(ta);
@@ -67,7 +78,7 @@ export default function GptReportButton({ base_date, rows, priceByTicker, previo
           <div className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl">
             <div className="border-b border-slate-200 px-5 py-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-slate-900">GPT 상담용 리포트</h3>
+                <h3 className="text-lg font-semibold text-slate-900">GPT 상담용 리포트 (행동 중심)</h3>
                 <div className="flex gap-2">
                   <button
                     type="button"
