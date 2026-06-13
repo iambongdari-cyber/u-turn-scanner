@@ -17,7 +17,6 @@ import {
   selectTradePlanTargets,
 } from '../../_lib/today_brief';
 import { buildAllBriefItems } from '../../_lib/gpt_report';
-import TodayConclusion from './TodayConclusion';
 import MustSeeSection from './MustSeeSection';
 
 interface Props {
@@ -102,13 +101,9 @@ export default function TopBrief({
   // v0.4-5: baseDate prop 은 더 이상 사용하지 않지만 호출처(page.tsx) 시그니처 유지
   void baseDate;
 
-  return (
-    <>
-      {/* 1. 오늘 결론 */}
-      <TodayConclusion brief={state.brief} />
+  // v0.6: brief 는 page.tsx 의 TodayConclusion (regime 기반) 이 대신함
+  // TopBrief 는 MustSeeSection (매매계획 기록 대상) 만 렌더
+  void state.brief;
 
-      {/* 2. 매매계획 기록하기 — 1~3개만 */}
-      <MustSeeSection selectedNewTargets={state.selectedNewTargets} />
-    </>
-  );
+  return <MustSeeSection selectedNewTargets={state.selectedNewTargets} />;
 }

@@ -14,12 +14,14 @@ import { judgeRow } from '../_lib/beginner';
 import { ActionRecommend, AI_DISCLAIMER, KIWOOM_DISCLAIMER, NOT_REAL_TRADE_DISCLAIMER } from '../_lib/trade_plan';
 import { computeUrgency } from '../_lib/today_brief';
 
-import TopBrief from './_components/TopBrief';
+import CoachShell from './_components/CoachShell';
 import MyPlansSection from './_components/MyPlansSection';
 import CollapsibleCandidates from './_components/CollapsibleCandidates';
 import MissedReportsBox from './_components/MissedReportsBox';
 import GptReportButton from './_components/GptReportButton';
 import MarketRegimeBox from './_components/MarketRegimeBox';
+import StrategyConditionBox from './_components/StrategyConditionBox';
+import { RecommendedActionsBox, ForbiddenActionsBox } from './_components/ActionGuideBoxes';
 
 export const dynamic = 'force-dynamic';
 
@@ -110,19 +112,24 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
         requestedDate={requestedDate ?? null}
       />
 
-      {/* v0.5 신규: 오늘 시장 상태 박스 */}
-      <MarketRegimeBox regime={data.marketRegime} />
-
-      {/* 1~2. 오늘 결론 + 매매계획 기록하기 */}
-      <TopBrief
+      {/* v0.6.1: CoachShell 이 §0 오늘의 결론 + §1~§4 + §5 매매계획 기록 대상을 한 번에 묶고
+                  selectTradePlanTargets 를 단 한 번 호출해 양쪽에 동일 데이터 전달 */}
+      <CoachShell
+        regime={data.marketRegime}
         rows={data.rows}
         priceByTicker={priceByTicker}
         previousJudgementByTicker={previousJudgementByTicker}
-        baseDate={data.base_date}
-        regimeMode={data.marketRegime?.mode}
+        middleBoxes={
+          <>
+            <MarketRegimeBox regime={data.marketRegime} />
+            <StrategyConditionBox />
+            <RecommendedActionsBox regime={data.marketRegime} />
+            <ForbiddenActionsBox regime={data.marketRegime} />
+          </>
+        }
       />
 
-      {/* 4. 내 예약매수 대기 + 5. 내 보유종목 점검 */}
+      {/* §6 §7 내 보유종목 점검 + 내 예약매수 대기 */}
       <MyPlansSection rowsByTicker={rowsByTicker} priceByTicker={priceByTicker} />
 
       {/* 6 + 7. 관심 후보 + 참고 후보 */}

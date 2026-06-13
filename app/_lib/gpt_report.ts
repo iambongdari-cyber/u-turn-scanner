@@ -1,20 +1,22 @@
 // app/_lib/gpt_report.ts
-// v0.4-2 GPT 상담용 리포트 — 행동 중심 (사용자 명세 §8)
+// v0.6 GPT 상담용 리포트 — 투자 코치 1단계 (사용자 명세 §0~§8)
 //
-// 변경:
-//  - "신규 후보 138건" 같은 큰 숫자 제거
-//  - 행동 중심 구성:
-//    1. 오늘 할 일
-//    2. 오늘 매매계획 기록 대상
-//    3. 보유종목 점검
-//    4. 예약매수 대기
-//    5. 오늘 하지 말아야 할 행동
-//    6. 참고 후보 요약 (맨 아래, 작게)
+// 섹션 순서:
+//   0. 오늘의 결론 (자연어 코치)
+//   1. 시장 상태
+//   2. 전략 컨디션 (v0.6 = 데이터 부족)
+//   3. 오늘 해야 할 행동
+//   4. 오늘 하지 말아야 할 행동
+//   5. 매매계획 기록 대상
+//   6. 보유종목 점검
+//   7. 예약매수 대기
+//   8. 참고 후보 요약
 
 import {
   TradePlan,
   ActionRecommend,
   STATUS_LABEL,
+  ACTION_LABEL,
   calculateAvgBuyPrice,
   isHoldingStatus,
   isReservedStatus,
@@ -23,13 +25,20 @@ import {
 import { BeginnerRow, judgeRow } from './beginner';
 import { buildReservationOpinion, buildHoldingOpinion, evaluateProximity } from './scoring';
 import {
-  TodayBrief,
   TodayBriefItem,
   computeUrgency,
   selectTradePlanTargets,
-  buildTodayBrief,
 } from './today_brief';
-import { MarketRegimeResult, regimeReportLines } from './market_regime';
+import {
+  MarketRegimeResult,
+  regimeReportLines,
+  conclusionReportLines,
+} from './market_regime';
+import {
+  StrategyConditionResult,
+  strategyConditionReportLines,
+  evaluateStrategyCondition,
+} from './strategy_condition';
 
 export interface GptReportInput {
   base_date: string | null;
@@ -37,15 +46,14 @@ export interface GptReportInput {
   plans: TradePlan[];
   currentPriceByTicker: Map<string, number>;
   previousJudgementByTicker?: Map<string, ActionRecommend>;
-  brief: TodayBrief;
   briefItems: TodayBriefItem[];
   selectedNewTargets: TodayBriefItem[];
-  /** v0.5 시장 상태 결과 */
   marketRegime?: MarketRegimeResult | null;
+  strategyCondition?: StrategyConditionResult | null;
 }
 
 // ───────────────────────────────────────────────────────────────
-// 메인 빌더 — v0.4-2 행동 중심 6 섹션
+// 메인 빌더 — v0.6 §0~§8
 // ───────────────────────────────────────────────────────────────
 export function buildGptReport(input: GptReportInput): string {
   const parts: string[] = [];
@@ -53,79 +61,92 @@ export function buildGptReport(input: GptReportInput): string {
   parts.push(`> 생성일: ${input.base_date ?? '-'} — ${AI_DISCLAIMER}`);
   parts.push('');
 
-  // v0.5 §0 오늘 시장 상태 (전략 모드)
-  parts.push(section0MarketRegime(input.marketRegime ?? null));
-
-  parts.push(section1Todo(input.brief, input.marketRegime ?? null));
-  parts.push(section2NewTargets(input.selectedNewTargets, input.currentPriceByTicker));
-  parts.push(section3Holding(input.plans, input.currentPriceByTicker));
-  parts.push(section4Reserved(input.plans, input.currentPriceByTicker));
-  parts.push(section5DontDo(input.brief));
-  parts.push(section6ReferenceSummary(input.briefItems));
+  parts.push(section0Conclusion(input.marketRegime ?? null));
+  parts.push(section1Market(input.marketRegime ?? null));
+  parts.push(section2StrategyCondition(input.strategyCondition ?? evaluateStrategyCondition(input.plans)));
+  parts.push(section3DoToday(input.marketRegime ?? null));
+  parts.push(section4DontDoToday(input.marketRegime ?? null));
+  parts.push(section5TradeTargets(input.selectedNewTargets, input.currentPriceByTicker));
+  parts.push(section6Holding(input.plans, input.currentPriceByTicker));
+  parts.push(section7Reserved(input.plans, input.currentPriceByTicker));
+  parts.push(section8Reference(input.briefItems));
 
   parts.push('');
   parts.push('---');
   parts.push(`※ ${AI_DISCLAIMER}`);
   parts.push('※ 키움 예약매수 / 실제 주문 / 자동매매 연동은 모두 없습니다.');
+  parts.push('※ 실제 최종 결정은 사용자가 합니다. 리포트는 개인 기록용 AI 판단입니다.');
   return parts.join('\n');
 }
 
 // ───────────────────────────────────────────────────────────────
-// §1 오늘 할 일
+// §0 오늘의 결론
 // ───────────────────────────────────────────────────────────────
-function section0MarketRegime(regime: MarketRegimeResult | null): string {
+function section0Conclusion(regime: MarketRegimeResult | null): string {
   const out: string[] = [];
-  out.push(`## 0. 오늘 시장 상태`);
+  out.push(`## 0. 오늘의 결론`);
+  for (const line of conclusionReportLines(regime)) out.push(line);
+  return out.join('\n');
+}
+
+// ───────────────────────────────────────────────────────────────
+// §1 시장 상태
+// ───────────────────────────────────────────────────────────────
+function section1Market(regime: MarketRegimeResult | null): string {
+  const out: string[] = [];
+  out.push(`\n## 1. 시장 상태`);
   for (const line of regimeReportLines(regime)) out.push(line);
   return out.join('\n');
 }
 
-function section1Todo(brief: TodayBrief, regime: MarketRegimeResult | null): string {
+// ───────────────────────────────────────────────────────────────
+// §2 전략 컨디션
+// ───────────────────────────────────────────────────────────────
+function section2StrategyCondition(condition: StrategyConditionResult): string {
   const out: string[] = [];
-  out.push(`\n## 1. 오늘 할 일`);
-
-  // v0.5 모드별 헤드라인 톤 분기
-  const tone =
-    regime?.mode === 'AGGRESSIVE' ? '오늘은 강세장 흐름이지만 추격매수는 피하세요.' :
-    regime?.mode === 'DEFENSIVE' ? '오늘은 보유 점검이 우선입니다. 신규 진입은 보수적으로.' :
-    regime?.mode === 'SELECTIVE' ? '오늘은 후보를 좁혀 1순위만 확인하세요.' :
-    null;
-
-  if (brief.headlineTodoCount === 0) {
-    out.push('오늘은 꼭 해야 할 매매 액션이 없습니다.');
-    if (tone) out.push(`> ${tone}`);
-    out.push('- [ ] 후보 전체 훑지 않기');
-    out.push('- [ ] 손절가 없이 예약매수 넣지 않기');
-    return out.join('\n');
-  }
-  const top1 = brief.todoActions.filter(a => a.priority === 'top1');
-  const secondary = brief.todoActions.filter(a => a.priority === 'secondary');
-  out.push('오늘 1순위 할 일은 이것입니다.');
-  if (tone) out.push(`> ${tone}`);
-  out.push('');
-  if (top1.length > 0) {
-    out.push('### 1순위');
-    out.push(`1. ${top1[0].text}`);
-  }
-  if (secondary.length > 0) {
-    out.push('');
-    out.push('### 시간 있으면 추가 확인');
-    for (let i = 0; i < secondary.length; i++) {
-      out.push(`${i + 2}. ${secondary[i].text}`);
-    }
-  }
+  out.push(`\n## 2. 전략 컨디션`);
+  for (const line of strategyConditionReportLines(condition)) out.push(line);
   return out.join('\n');
 }
 
 // ───────────────────────────────────────────────────────────────
-// §2 오늘 매매계획 기록 대상 (1~3개)
+// §3 오늘 해야 할 행동
 // ───────────────────────────────────────────────────────────────
-function section2NewTargets(targets: TodayBriefItem[], priceMap: Map<string, number>): string {
+function section3DoToday(regime: MarketRegimeResult | null): string {
   const out: string[] = [];
-  out.push(`\n## 2. 오늘 매매계획 기록 대상`);
+  out.push(`\n## 3. 오늘 해야 할 행동`);
+  const actions = regime?.recommendedActions ?? [
+    '보합장 가정으로 보수적 접근',
+    '1순위만 확인',
+    '현금 비중 50% 이상 유지',
+  ];
+  for (const a of actions) out.push(`- ${a}`);
+  return out.join('\n');
+}
+
+// ───────────────────────────────────────────────────────────────
+// §4 오늘 하지 말아야 할 행동
+// ───────────────────────────────────────────────────────────────
+function section4DontDoToday(regime: MarketRegimeResult | null): string {
+  const out: string[] = [];
+  out.push(`\n## 4. 오늘 하지 말아야 할 행동`);
+  const actions = regime?.forbiddenActions ?? [
+    '후보 전체 훑기',
+    '손절가 없는 매수',
+    '동시 다종목 진입',
+  ];
+  for (const a of actions) out.push(`- ${a}`);
+  return out.join('\n');
+}
+
+// ───────────────────────────────────────────────────────────────
+// §5 매매계획 기록 대상
+// ───────────────────────────────────────────────────────────────
+function section5TradeTargets(targets: TodayBriefItem[], priceMap: Map<string, number>): string {
+  const out: string[] = [];
+  out.push(`\n## 5. 매매계획 기록 대상`);
   if (targets.length === 0) {
     out.push('- 오늘 신규 매매계획 기록 대상 없음.');
-    out.push('- 참고 후보는 아래 요약 영역 참고.');
     return out.join('\n');
   }
   for (const it of targets) {
@@ -133,23 +154,27 @@ function section2NewTargets(targets: TodayBriefItem[], priceMap: Map<string, num
     const v = judgeRow(it.row);
     const cur = priceMap.get(it.ticker) ?? it.row.close ?? null;
     out.push(`- **${it.name} (${it.ticker})**`);
-    out.push(`  - AI 판단: 매수 / 위험: ${labelRisk(v.risk)} / U턴: ${v.uturn_passed}/5`);
+    out.push(`  - AI 판단: ${ACTION_LABEL[v.ai_judgement]} / 위험: ${labelRisk(v.risk)} / U턴: ${v.uturn_passed}/5`);
     if (cur != null) out.push(`  - 현재가: ${cur.toLocaleString()}원`);
     if (v.why_picked.length > 0) {
-      out.push(`  - 사유: ${v.why_picked.slice(0, 3).join(' · ')}`);
+      out.push(`  - 사유:`);
+      for (const w of v.why_picked.slice(0, 3)) out.push(`    · ${w}`);
     }
-    out.push(`  - 행동: 매매 계획 기록 후 키움 예약매수 직접 입력`);
+    out.push(`  - 행동:`);
+    out.push(`    · 매매계획 기록`);
+    out.push(`    · 손절가 입력`);
+    out.push(`    · 예약매수 여부 직접 판단`);
   }
   return out.join('\n');
 }
 
 // ───────────────────────────────────────────────────────────────
-// §3 보유종목 점검
+// §6 보유종목 점검
 // ───────────────────────────────────────────────────────────────
-function section3Holding(plans: TradePlan[], priceMap: Map<string, number>): string {
+function section6Holding(plans: TradePlan[], priceMap: Map<string, number>): string {
   const holding = plans.filter(p => isHoldingStatus(p.status));
   const out: string[] = [];
-  out.push(`\n## 3. 보유종목 점검`);
+  out.push(`\n## 6. 보유종목 점검`);
   if (holding.length === 0) {
     out.push('- 현재 보유 종목 없음.');
     return out.join('\n');
@@ -177,12 +202,12 @@ function section3Holding(plans: TradePlan[], priceMap: Map<string, number>): str
 }
 
 // ───────────────────────────────────────────────────────────────
-// §4 예약매수 대기
+// §7 예약매수 대기
 // ───────────────────────────────────────────────────────────────
-function section4Reserved(plans: TradePlan[], priceMap: Map<string, number>): string {
+function section7Reserved(plans: TradePlan[], priceMap: Map<string, number>): string {
   const reserved = plans.filter(p => isReservedStatus(p.status));
   const out: string[] = [];
-  out.push(`\n## 4. 예약매수 대기`);
+  out.push(`\n## 7. 예약매수 대기`);
   if (reserved.length === 0) {
     out.push('- 현재 예약매수 대기 종목 없음.');
     return out.join('\n');
@@ -206,23 +231,11 @@ function section4Reserved(plans: TradePlan[], priceMap: Map<string, number>): st
 }
 
 // ───────────────────────────────────────────────────────────────
-// §5 오늘 하지 말아야 할 행동
+// §8 참고 후보 요약 (맨 아래, 작게)
 // ───────────────────────────────────────────────────────────────
-function section5DontDo(brief: TodayBrief): string {
+function section8Reference(items: TodayBriefItem[]): string {
   const out: string[] = [];
-  out.push(`\n## 5. 오늘 하지 말아야 할 행동`);
-  for (const d of brief.dontDo) {
-    out.push(`- ${d}`);
-  }
-  return out.join('\n');
-}
-
-// ───────────────────────────────────────────────────────────────
-// §6 참고 후보 요약 — 맨 아래, 작게 (사용자 명세 §8)
-// ───────────────────────────────────────────────────────────────
-function section6ReferenceSummary(items: TodayBriefItem[]): string {
-  const out: string[] = [];
-  out.push(`\n## 6. 참고 후보 요약`);
+  out.push(`\n## 8. 참고 후보 요약`);
   const newOnly = items.filter(i => i.urgency.kind === 'NEW_CANDIDATE');
   const interest = newOnly.filter(i => i.urgency.level === 'INTEREST').length;
   const later = newOnly.filter(i => i.urgency.level === 'LATER').length;
@@ -234,7 +247,6 @@ function section6ReferenceSummary(items: TodayBriefItem[]): string {
   out.push(`- 나중 후보 (조건 약함): ${later}건`);
   out.push(`- 숨김 (제외/위험): ${hidden}건`);
 
-  // 관심 후보 중 상위 5개만 이름 노출
   const topInterest = newOnly
     .filter(i => i.urgency.level === 'INTEREST' && i.row)
     .slice(0, 5)
@@ -259,19 +271,18 @@ function labelRisk(r: string): string {
 }
 
 // ───────────────────────────────────────────────────────────────
-// 헬퍼: brief items 일괄 생성 + 매매계획 기록 대상 선정 + 결론
-// 호출 측에서 한 줄로 모든 입력을 만들 수 있게 통합
+// 헬퍼: brief items + 매매계획 기록 대상 일괄 생성
 // ───────────────────────────────────────────────────────────────
 export interface BuildAllInput {
   rows: BeginnerRow[];
   plans: TradePlan[];
   priceMap: Map<string, number>;
   previousJudgementMap?: Map<string, ActionRecommend>;
+  regimeMode?: 'AGGRESSIVE' | 'SELECTIVE' | 'DEFENSIVE' | 'HOLD_CASH';
 }
 
 export interface BuildAllResult {
   briefItems: TodayBriefItem[];
-  brief: TodayBrief;
   selectedNewTargets: TodayBriefItem[];
 }
 
@@ -281,23 +292,14 @@ export function buildAll(input: BuildAllInput): BuildAllResult {
   const reservedItems = briefItems.filter(i => i.urgency.kind === 'RESERVED');
   const holdingItems = briefItems.filter(i => i.urgency.kind === 'HOLDING');
   const hasHoldingOrReserved = reservedItems.length + holdingItems.length > 0;
-  const selectedNewTargets = selectTradePlanTargets(newItems, hasHoldingOrReserved);
-  const interestCount = newItems.filter(i => i.urgency.level === 'INTEREST').length;
-
-  const brief = buildTodayBrief({
-    selectedNewTargets,
-    reservedItems,
-    holdingItems,
-    interestCount,
-  });
-  return { briefItems, brief, selectedNewTargets };
+  const selectedNewTargets = selectTradePlanTargets(newItems, hasHoldingOrReserved, input.regimeMode);
+  return { briefItems, selectedNewTargets };
 }
 
 export function buildAllBriefItems(input: BuildAllInput): TodayBriefItem[] {
   const out: TodayBriefItem[] = [];
   const planTickers = new Set(input.plans.map(p => p.ticker));
 
-  // 매매 계획 항목 (예약/보유)
   for (const p of input.plans) {
     if (p.status === 'CLOSED' || p.status === 'CANCELLED') continue;
     const cur = input.priceMap.get(p.ticker) ?? null;
@@ -318,7 +320,6 @@ export function buildAllBriefItems(input: BuildAllInput): TodayBriefItem[] {
     });
   }
 
-  // 신규 후보 (매매 계획 미등록)
   for (const r of input.rows) {
     if (planTickers.has(r.ticker)) continue;
     const cur = input.priceMap.get(r.ticker) ?? null;

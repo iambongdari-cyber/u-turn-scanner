@@ -325,14 +325,17 @@ export interface TodayBriefItem {
   currentPrice?: number | null;
 }
 
-/** v0.5 전략 모드 — 외부 import 회피를 위해 string union 으로 받음 */
-export type SelectRegimeMode = 'AGGRESSIVE' | 'SELECTIVE' | 'DEFENSIVE';
+/** v0.6 전략 모드 — 외부 import 회피를 위해 string union 으로 받음 (관망 HOLD_CASH 추가) */
+export type SelectRegimeMode = 'AGGRESSIVE' | 'SELECTIVE' | 'DEFENSIVE' | 'HOLD_CASH';
 
 export function selectTradePlanTargets(
   newItems: TodayBriefItem[],
   hasHoldingOrReserved: boolean,
   regimeMode?: SelectRegimeMode,
 ): TodayBriefItem[] {
+  // v0.6: 관망(HOLD_CASH = 위험구간) — 신규 진입 금지, 무조건 0개 반환
+  if (regimeMode === 'HOLD_CASH') return [];
+
   // TODAY 또는 URGENT 등급의 신규 후보만 후보
   const pool = newItems.filter(i =>
     i.urgency.kind === 'NEW_CANDIDATE' &&

@@ -1,69 +1,69 @@
+'use client';
 // app/beginner/_components/TodayConclusion.tsx
-// v0.4-2 서버 컴포넌트 — 오늘 결론 (1순위 / 추가 확인 분리)
+// v0.6.1 오늘의 결론 — CoachShell 로부터 selectedNewTargets[0].name 을 받아
+// 매매계획 기록 대상과 1순위 종목명 동기화.
 
-import { TodayBrief } from '../../_lib/today_brief';
+import { MarketRegimeResult, REGIME_BADGE_CLASS, MODE_BADGE_CLASS, buildConclusionText } from '../../_lib/market_regime';
 import { AI_DISCLAIMER } from '../../_lib/trade_plan';
 
 interface Props {
-  brief: TodayBrief;
+  regime: MarketRegimeResult | null;
+  /** v0.6.1: CoachShell 이 계산한 selectTradePlanTargets 의 첫 번째 종목명 (없으면 null) */
+  topPickName: string | null;
 }
 
-export default function TodayConclusion({ brief }: Props) {
-  const top1 = brief.todoActions.filter(a => a.priority === 'top1');
-  const secondary = brief.todoActions.filter(a => a.priority === 'secondary');
-  const isEmpty = brief.headlineTodoCount === 0;
+export default function TodayConclusion({ regime, topPickName }: Props) {
+  if (!regime) {
+    return (
+      <section className="rounded-lg border border-indigo-300 bg-indigo-50 p-4">
+        <h2 className="text-lg font-semibold text-indigo-900">📋 오늘의 결론</h2>
+        <p className="mt-2 text-sm text-slate-700">
+          시장 상태 판단에 필요한 데이터가 부족합니다. 보합장 가정으로 보수적으로 접근하세요.
+        </p>
+      </section>
+    );
+  }
+
+  // v0.6.1: topPickName 반영해서 결론 문구 재빌드 (매매계획 기록 대상 1순위와 동기화)
+  const conclusionText = buildConclusionText(regime.regime, regime.mode, topPickName);
 
   return (
     <section className="rounded-lg border border-indigo-300 bg-indigo-50 p-4">
-      <h2 className="text-lg font-semibold text-indigo-900">📌 오늘 결론</h2>
+      <h2 className="text-lg font-semibold text-indigo-900">📋 오늘의 결론</h2>
 
-      {/* 헤드라인 — "오늘 1순위 할 일은 이것입니다." */}
-      <p className="mt-1 text-base font-semibold text-indigo-900">
-        {isEmpty
-          ? '오늘은 꼭 해야 할 일이 없습니다.'
-          : '오늘 1순위 할 일은 이것입니다.'}
-      </p>
-
-      {/* 1순위 */}
-      {top1.length > 0 && (
-        <div className="mt-3 rounded-md border border-indigo-300 bg-white p-3">
-          <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">1순위</div>
-          <p className="mt-1 text-sm font-semibold text-slate-900">{top1[0].text}</p>
+      {/* 오늘의 태도 / 시장 상태 / 전략 모드 */}
+      <div className="mt-2 space-y-1 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-slate-500">오늘의 태도:</span>
+          <strong className="text-base text-slate-900">{regime.attitude}</strong>
         </div>
-      )}
-
-      {/* 시간 있으면 추가 확인 */}
-      {secondary.length > 0 && (
-        <div className="mt-3">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">시간 있으면 추가 확인</div>
-          <ol start={2} className="mt-1.5 space-y-1 text-sm text-slate-800">
-            {secondary.map((a, i) => (
-              <li key={i} className="flex gap-2">
-                <span className="font-semibold text-slate-600">{i + 2}.</span>
-                <span>{a.text}</span>
-              </li>
-            ))}
-          </ol>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-slate-500">시장 상태:</span>
+          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${REGIME_BADGE_CLASS[regime.regime]}`}>
+            {regime.display}
+          </span>
+          {regime.displayScore != null && (
+            <strong className="tabular-nums text-slate-700">{regime.displayScore}점</strong>
+          )}
         </div>
-      )}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-slate-500">전략 모드:</span>
+          <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${MODE_BADGE_CLASS[regime.mode]}`}>
+            {regime.modeLabel}
+          </span>
+        </div>
+      </div>
 
-      {/* 보조 한 줄 */}
-      {brief.briefLines.length > 0 && (
-        <ul className="mt-3 space-y-0.5 text-xs text-indigo-700">
-          {brief.briefLines.map((b, i) => (
-            <li key={i}>· {b}</li>
-          ))}
-        </ul>
-      )}
+      {/* 자연어 안내 — 재빌드된 conclusionText (1순위 종목명 동기화) */}
+      <div className="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-800">
+        {conclusionText}
+      </div>
 
-      {/* 오늘 하지 말아야 할 행동 */}
-      <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3">
-        <div className="text-sm font-semibold text-red-900">🚫 오늘 하지 말 것</div>
-        <ul className="mt-1 space-y-0.5">
-          {brief.dontDo.map((d, i) => (
-            <li key={i} className="text-xs text-red-800">· {d}</li>
-          ))}
-        </ul>
+      {/* 핵심 문장 */}
+      <div className="mt-3 rounded-md border border-indigo-200 bg-white/70 px-3 py-2">
+        <div className="text-sm font-semibold text-indigo-800">
+          💡 {regime.corePhrase}
+        </div>
       </div>
 
       <p className="mt-3 text-[10px] text-indigo-600">※ {AI_DISCLAIMER}</p>

@@ -7,7 +7,7 @@ import { loadAllPlans } from '../../_lib/trade_storage';
 import { buildGptReport, buildAll } from '../../_lib/gpt_report';
 import { BeginnerRow } from '../../_lib/beginner';
 import { ActionRecommend } from '../../_lib/trade_plan';
-import { MarketRegimeResult } from '../../_lib/market_regime';
+import { MarketRegimeResult, buildConclusionText } from '../../_lib/market_regime';
 
 interface Props {
   base_date: string | null;
@@ -30,12 +30,21 @@ export default function GptReportButton({ base_date, rows, priceByTicker, previo
       : undefined;
     const plans = loadAllPlans();
 
-    const { briefItems, brief, selectedNewTargets } = buildAll({
+    const { briefItems, selectedNewTargets } = buildAll({
       rows,
       plans,
       priceMap,
       previousJudgementMap: prevMap,
+      regimeMode: marketRegime?.mode,
     });
+
+    // v0.6.1: 매매계획 기록 대상 1순위 종목명으로 marketRegime 의 conclusionText 동기화
+    let regimeForReport = marketRegime ?? null;
+    if (regimeForReport) {
+      const topPickName = selectedNewTargets[0]?.name ?? null;
+      const syncedConclusion = buildConclusionText(regimeForReport.regime, regimeForReport.mode, topPickName);
+      regimeForReport = { ...regimeForReport, conclusionText: syncedConclusion };
+    }
 
     const md = buildGptReport({
       base_date,
@@ -43,10 +52,9 @@ export default function GptReportButton({ base_date, rows, priceByTicker, previo
       plans,
       currentPriceByTicker: priceMap,
       previousJudgementByTicker: prevMap,
-      brief,
       briefItems,
       selectedNewTargets,
-      marketRegime,
+      marketRegime: regimeForReport,
     });
     setMarkdown(md);
     setOpen(true);

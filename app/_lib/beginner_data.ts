@@ -219,7 +219,8 @@ export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundl
 
   const rows = Array.from(rowsMap.values());
 
-  // v0.5 시장 상태 판단
+  // v0.6.1 시장 상태 판단 — 종목명은 클라이언트(CoachShell)에서 selectTradePlanTargets 결과로 override
+  // 서버는 plans 를 모르므로 topPickName 미전달 → buildConclusionText 의 fallback 문구로 빌드.
   const marketRegime = judgeMarketRegime({
     market: scan?.market ?? null,
     summary: scan?.summary ?? null,
