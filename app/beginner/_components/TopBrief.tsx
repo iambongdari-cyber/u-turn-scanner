@@ -18,7 +18,6 @@ import {
 } from '../../_lib/today_brief';
 import { buildAllBriefItems } from '../../_lib/gpt_report';
 import TodayConclusion from './TodayConclusion';
-import TodayTodoBox from './TodayTodoBox';
 import MustSeeSection from './MustSeeSection';
 
 interface Props {
@@ -98,15 +97,15 @@ export default function TopBrief({
   // (현재 미사용 — MyPlansSection 안의 storage event 가 자동 처리)
   void setReloadKey;
 
+  // v0.4-5: baseDate prop 은 더 이상 사용하지 않지만 호출처(page.tsx) 시그니처 유지
+  void baseDate;
+
   return (
     <>
       {/* 1. 오늘 결론 */}
       <TodayConclusion brief={state.brief} />
 
-      {/* 2. 오늘 할 일 */}
-      <TodayTodoBox actions={state.brief.todoActions} baseDate={baseDate} />
-
-      {/* 3. 꼭 보세요 — 매매계획 기록 대상 1~3개만 */}
+      {/* 2. 매매계획 기록하기 — 1~3개만 */}
       <MustSeeSection selectedNewTargets={state.selectedNewTargets} />
     </>
   );
