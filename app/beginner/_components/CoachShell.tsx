@@ -1,11 +1,11 @@
 'use client';
 // app/beginner/_components/CoachShell.tsx
-// v0.6.1 코치 쉘 — selectTradePlanTargets 를 한 번만 호출하고
-// TodayConclusion 과 MustSeeSection 양쪽에 동일한 selectedNewTargets 전달.
-//
-// 사용자 명세 §3:
-//  - 오늘의 결론과 매매계획 기록 대상이 항상 동일한 데이터를 참조
-//  - 별도 추천 로직 중복 사용 금지
+// v0.6.1 코치 쉘 — selectTradePlanTargets 를 한 번만 호출하고 양쪽에 동일 데이터 전달.
+// v0.8-4.1 화면 중복 정리:
+//   - "오늘의 결론" (TodayConclusion) 화면 노출 제거 — MarketFlowBox 와 중복.
+//   - MarketFlowBox 를 화면 최상단 핵심 카드로 승격.
+//   - 화면 순서: MarketFlowBox → middleBoxes(MarketRegimeBox + StrategyConditionBox) → MustSeeSection.
+//   - TodayConclusion 컴포넌트 파일은 보존 (향후 재사용/회귀 대비).
 
 import { ReactNode, useEffect, useState } from 'react';
 import { BeginnerRow } from '../../_lib/beginner';
@@ -22,7 +22,7 @@ import { MarketStrength, CapStyle } from '../../_lib/market_strength';
 import { SectorFlow } from '../../_lib/sector_flow';
 import { classifyStockCharacter, StockCharacterResult } from '../../_lib/stock_character';
 import { buildTomorrowAction, TomorrowAction } from '../../_lib/tomorrow_action';
-import TodayConclusion from './TodayConclusion';
+// v0.8-4.1: TodayConclusion 화면 노출 제거 → import 제거 (파일은 그대로 유지)
 import MustSeeSection from './MustSeeSection';
 import MarketFlowBox from './MarketFlowBox';
 
@@ -112,13 +112,7 @@ export default function CoachShell({
 
   return (
     <>
-      {/* §0 오늘의 결론 — topPickName 동기화 */}
-      <TodayConclusion regime={regime} topPickName={topPickName} />
-
-      {/* §1~§4 영역 (page.tsx 에서 children 으로 전달) */}
-      {middleBoxes}
-
-      {/* v0.8-1 §3.5 내일 한눈에 보기 + v0.8-2 업종/대장주 + v0.8-3 1순위 성격 */}
+      {/* v0.8-4.1 최상단 핵심 카드: 🌊 내일 한눈에 보기 (오늘 장 요약 / 내일 행동 / 금지 행동 통합) */}
       {regime && marketStrength && capStyle && tomorrowAction && (
         <MarketFlowBox
           marketRegime={regime}
@@ -127,11 +121,14 @@ export default function CoachShell({
           tomorrowAction={tomorrowAction}
           sectorFlow={sectorFlow ?? null}
           stockCharacter={stockCharacter}
-          topPickName={selectedNewTargets[0]?.name ?? null}
+          topPickName={topPickName}
         />
       )}
 
-      {/* §5 매매계획 기록하기 — 동일한 selectedNewTargets */}
+      {/* 📊 오늘 시장 상태 + 🧭 전략 컨디션 (page.tsx 에서 middleBoxes 로 전달) */}
+      {middleBoxes}
+
+      {/* 📝 매매계획 기록하기 — 동일한 selectedNewTargets */}
       <MustSeeSection selectedNewTargets={selectedNewTargets} />
     </>
   );

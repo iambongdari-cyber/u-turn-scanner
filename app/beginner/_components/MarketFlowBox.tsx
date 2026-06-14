@@ -59,6 +59,12 @@ export default function MarketFlowBox({
             <li key={i}>· {line}</li>
           ))}
         </ul>
+        {/* v0.8-4.1: TodayConclusion 의 💡 핵심 문장 흡수 (중복 카드 제거 후 단일 노출 지점) */}
+        {marketRegime.corePhrase && (
+          <div className="mt-2 rounded-md border border-indigo-200 bg-white/80 px-2.5 py-1.5 text-[12px] font-medium text-indigo-800">
+            💡 {marketRegime.corePhrase}
+          </div>
+        )}
       </div>
 
       {/* 내일 행동 */}
