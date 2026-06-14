@@ -122,6 +122,8 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
         rows={data.rows}
         priceByTicker={priceByTicker}
         previousJudgementByTicker={previousJudgementByTicker}
+        marketStrength={data.marketStrength}
+        capStyle={data.capStyle}
         middleBoxes={
           <>
             <MarketRegimeBox regime={data.marketRegime} />

@@ -16,6 +16,12 @@ import {
   ScanSummaryRaw,
   SectorRegimeRaw,
 } from './market_regime';
+import {
+  judgeMarketStrength,
+  judgeCapStyle,
+  MarketStrength,
+  CapStyle,
+} from './market_strength';
 
 interface CandidateBottomRaw {
   ticker: string;
@@ -142,6 +148,10 @@ export interface BeginnerDataBundle {
   effectiveDate: string | null;
   /** v0.5 시장 상태 판단 결과. 데이터 부족 시 UNKNOWN 으로 채워짐. */
   marketRegime: MarketRegimeResult;
+  /** v0.8-1 KOSPI/KOSDAQ 강도 + 상대강도 + 자연어 */
+  marketStrength: MarketStrength;
+  /** v0.8-1 대형주/중소형주 흐름 */
+  capStyle: CapStyle;
 }
 
 export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundle> {
@@ -233,6 +243,10 @@ export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundl
       : null,
   });
 
+  // v0.8-1 KOSPI/KOSDAQ 강도 + 대형주/중소형주
+  const marketStrength = judgeMarketStrength(scan?.market ?? null);
+  const capStyle = judgeCapStyle(marketStrength);
+
   return {
     base_date: scan?.base_date ?? date ?? null,
     rows,
@@ -243,6 +257,8 @@ export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundl
     requestedDate: date ?? null,
     effectiveDate: scan?.base_date ?? date ?? null,
     marketRegime,
+    marketStrength,
+    capStyle,
   };
 }
 
