@@ -1,21 +1,25 @@
 'use client';
 // app/beginner/_components/GptReportButton.tsx
 // v0.7.3 인라인 펼침 방식 (모달 제거)
+// v0.8-4 GPT에게 다시 물어보기 — 판단 리포트(v0.8) + 부록(기존 상세) 결합
 //
-// 변경 (v0.7.2 → v0.7.3):
-//  - 모달 UX 완전 제거 — fixed/portal/dialog 미사용
-//  - 버튼 클릭 시 같은 카드 안에서 리포트 영역을 바로 펼침
-//  - 본문은 실제 화면에 inline 렌더 (display:none / opacity:0 / position:fixed 모두 금지)
-//  - try/catch 로 리포트 생성 오류 화면에 표시
-//  - 버튼 라벨 유지: "GPT 상담용 리포트 보기/복사"
+// 변경 (v0.8-4):
+//  - 버튼 라벨: "💬 GPT 상담용 리포트 보기/복사" → "💬 GPT에게 다시 물어보기"
+//  - 리포트 본문: buildJudgmentReport (v0.8 흐름) 가 먼저 나오고,
+//    그 뒤에 기존 buildGptReport 가 부록으로 붙는다 (buildCombinedReport)
+//  - PC 인라인 펼침 / 자동 복사 / textarea readOnly 방식은 그대로 유지
 
 import { useRef, useState } from 'react';
 import { loadAllPlans } from '../../_lib/trade_storage';
-import { buildGptReport, buildAll } from '../../_lib/gpt_report';
+import { buildAll, buildCombinedReport } from '../../_lib/gpt_report';
 import { BeginnerRow } from '../../_lib/beginner';
 import { ActionRecommend } from '../../_lib/trade_plan';
 import { MarketRegimeResult, buildConclusionText } from '../../_lib/market_regime';
 import { evaluateStrategyCondition } from '../../_lib/strategy_condition';
+import { MarketStrength, CapStyle } from '../../_lib/market_strength';
+import { SectorFlow } from '../../_lib/sector_flow';
+import { classifyStockCharacter } from '../../_lib/stock_character';
+import { buildTomorrowAction } from '../../_lib/tomorrow_action';
 
 interface Props {
   base_date: string | null;
@@ -23,6 +27,10 @@ interface Props {
   priceByTicker: Record<string, number>;
   previousJudgementByTicker?: Record<string, ActionRecommend>;
   marketRegime?: MarketRegimeResult | null;
+  /** v0.8-4 판단 리포트용 추가 데이터 — 데이터 없으면 fallback 안내 */
+  marketStrength?: MarketStrength | null;
+  capStyle?: CapStyle | null;
+  sectorFlow?: SectorFlow | null;
 }
 
 type Phase = 'closed' | 'generating' | 'ready' | 'error';
@@ -30,6 +38,7 @@ type CopyStatus = 'idle' | 'success' | 'fail';
 
 export default function GptReportButton({
   base_date, rows, priceByTicker, previousJudgementByTicker, marketRegime,
+  marketStrength, capStyle, sectorFlow,
 }: Props) {
   const [phase, setPhase] = useState<Phase>('closed');
   const [markdown, setMarkdown] = useState('');
@@ -74,16 +83,54 @@ export default function GptReportButton({
         regimeForReport = { ...regimeForReport, conclusionText: syncedConclusion };
       }
 
-      const md = buildGptReport({
-        base_date,
-        rows,
-        plans,
-        currentPriceByTicker: priceMap,
-        previousJudgementByTicker: prevMap,
-        briefItems,
-        selectedNewTargets,
-        marketRegime: regimeForReport,
-      });
+      // v0.8-4: 1순위 종목 성격 + 내일 행동 계산
+      const topPick = selectedNewTargets[0] ?? null;
+      const stockCharacter = regimeForReport
+        ? classifyStockCharacter({
+            row: topPick?.row ?? null,
+            regime: regimeForReport.regime,
+            conditionState: condition.state,
+            sectorFlow: sectorFlow ?? null,
+          })
+        : null;
+      const reservedItems = briefItems.filter(i => i.urgency.kind === 'RESERVED');
+      const holdingItems = briefItems.filter(i => i.urgency.kind === 'HOLDING');
+      const hasHoldingOrReserved = reservedItems.length + holdingItems.length > 0;
+      const tomorrowAction = regimeForReport
+        ? buildTomorrowAction({
+            regime: regimeForReport.regime,
+            conditionState: condition.state,
+            topPickName: topPick?.name ?? null,
+            hasHoldingOrReserved,
+            strongCandidateCount: selectedNewTargets.length,
+            stockCharacter: stockCharacter?.character ?? null,
+          })
+        : null;
+
+      const md = buildCombinedReport(
+        {
+          base_date,
+          marketRegime: regimeForReport,
+          marketStrength: marketStrength ?? null,
+          capStyle: capStyle ?? null,
+          sectorFlow: sectorFlow ?? null,
+          stockCharacter,
+          tomorrowAction,
+          strategyCondition: condition,
+          topPick,
+        },
+        {
+          base_date,
+          rows,
+          plans,
+          currentPriceByTicker: priceMap,
+          previousJudgementByTicker: prevMap,
+          briefItems,
+          selectedNewTargets,
+          marketRegime: regimeForReport,
+          strategyCondition: condition,
+        },
+      );
 
       if (!md || md.trim().length === 0) {
         throw new Error('리포트 본문이 비어 있습니다.');
@@ -208,14 +255,14 @@ export default function GptReportButton({
     //   - min-w-0: flex item 의 기본 min-width:auto 차단
     //   - max-w-full + overflow-hidden: wrapper 자체가 부모 너비를 넘지 않음
     <div className="w-full min-w-0 max-w-full overflow-hidden">
-      {/* 버튼 — 항상 표시 */}
+      {/* 버튼 — 항상 표시 (v0.8-4 라벨 변경) */}
       {phase === 'closed' && (
         <button
           type="button"
           onClick={handleOpen}
           className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
         >
-          💬 GPT 상담용 리포트 보기/복사
+          💬 GPT에게 다시 물어보기
         </button>
       )}
 
@@ -252,10 +299,10 @@ export default function GptReportButton({
       {phase === 'ready' && (
         // v0.7.6.2: 펼침 영역도 가로 확장 방지
         <div className="w-full min-w-0 max-w-full overflow-hidden rounded-lg border border-emerald-200 bg-white">
-          {/* 헤더 */}
+          {/* 헤더 (v0.8-4) */}
           <div className="border-b border-slate-200 px-4 py-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h3 className="text-base font-semibold text-slate-900">GPT 상담용 리포트</h3>
+              <h3 className="text-base font-semibold text-slate-900">U턴스캐너 판단 → GPT에게 다시 물어보기</h3>
               <button
                 type="button"
                 onClick={handleClose}
@@ -265,7 +312,7 @@ export default function GptReportButton({
               </button>
             </div>
             <p className="mt-1 text-xs text-slate-600">
-              아래 내용을 복사해서 ChatGPT 에 붙여넣으세요.
+              U턴스캐너의 판단을 복사해서 ChatGPT 에게 한 번 더 점검받습니다.
             </p>
 
             {/* 액션 버튼 */}
@@ -289,7 +336,7 @@ export default function GptReportButton({
             {/* 상태 메시지 */}
             {copyStatus === 'success' && (
               <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                ✓ GPT 상담용 리포트를 복사했습니다.
+                ✓ U턴스캐너 판단 리포트를 복사했습니다. ChatGPT 에 붙여넣고 한 번 더 점검받으세요.
               </div>
             )}
             {copyStatus === 'fail' && (

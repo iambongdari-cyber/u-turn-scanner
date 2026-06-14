@@ -11,8 +11,11 @@ import Link from 'next/link';
 import { loadBeginnerData, loadPreviousScanRows } from '../../_lib/beginner_data';
 import { judgeRow } from '../../_lib/beginner';
 import { ActionRecommend } from '../../_lib/trade_plan';
-import { buildGptReport, buildAll } from '../../_lib/gpt_report';
+import { buildAll, buildCombinedReport } from '../../_lib/gpt_report';
 import { buildConclusionText } from '../../_lib/market_regime';
+import { classifyStockCharacter } from '../../_lib/stock_character';
+import { buildTomorrowAction } from '../../_lib/tomorrow_action';
+import { evaluateStrategyCondition } from '../../_lib/strategy_condition';
 import GptReportClient from './_components/GptReportClient';
 
 export const dynamic = 'force-dynamic';
@@ -64,16 +67,55 @@ export default async function GptReportPage({ searchParams }: PageProps) {
       regimeForReport = { ...regimeForReport, conclusionText: syncedConclusion };
     }
 
-    initialMarkdown = buildGptReport({
-      base_date: data.base_date,
-      rows: data.rows,
-      plans: [],
-      currentPriceByTicker: priceMap,
-      previousJudgementByTicker: prevMap,
-      briefItems,
-      selectedNewTargets,
-      marketRegime: regimeForReport,
-    });
+    // v0.8-4 판단 리포트용 추가 데이터 계산 (plans=[] 기준)
+    const condition = evaluateStrategyCondition([]);
+    const topPick = selectedNewTargets[0] ?? null;
+    const stockCharacter = regimeForReport
+      ? classifyStockCharacter({
+          row: topPick?.row ?? null,
+          regime: regimeForReport.regime,
+          conditionState: condition.state,
+          sectorFlow: data.sectorFlow ?? null,
+        })
+      : null;
+    const reservedItems = briefItems.filter(i => i.urgency.kind === 'RESERVED');
+    const holdingItems = briefItems.filter(i => i.urgency.kind === 'HOLDING');
+    const hasHoldingOrReserved = reservedItems.length + holdingItems.length > 0;
+    const tomorrowAction = regimeForReport
+      ? buildTomorrowAction({
+          regime: regimeForReport.regime,
+          conditionState: condition.state,
+          topPickName: topPick?.name ?? null,
+          hasHoldingOrReserved,
+          strongCandidateCount: selectedNewTargets.length,
+          stockCharacter: stockCharacter?.character ?? null,
+        })
+      : null;
+
+    initialMarkdown = buildCombinedReport(
+      {
+        base_date: data.base_date,
+        marketRegime: regimeForReport,
+        marketStrength: data.marketStrength,
+        capStyle: data.capStyle,
+        sectorFlow: data.sectorFlow,
+        stockCharacter,
+        tomorrowAction,
+        strategyCondition: condition,
+        topPick,
+      },
+      {
+        base_date: data.base_date,
+        rows: data.rows,
+        plans: [],
+        currentPriceByTicker: priceMap,
+        previousJudgementByTicker: prevMap,
+        briefItems,
+        selectedNewTargets,
+        marketRegime: regimeForReport,
+        strategyCondition: condition,
+      },
+    );
     if (!initialMarkdown || initialMarkdown.trim().length === 0) {
       buildError = '리포트 본문이 비어 있습니다.';
     }
@@ -85,13 +127,13 @@ export default async function GptReportPage({ searchParams }: PageProps) {
     <main className="mx-auto max-w-3xl px-4 py-6">
       <header className="border-b border-slate-200 pb-3">
         <div className="flex items-center justify-between gap-2">
-          <h1 className="text-xl font-bold text-slate-900">💬 GPT 상담용 리포트</h1>
+          <h1 className="text-xl font-bold text-slate-900">💬 GPT에게 다시 물어보기</h1>
           <Link href="/beginner" className="text-sm text-indigo-600 hover:underline">
             ← 홈으로
           </Link>
         </div>
         <p className="mt-1 text-sm text-slate-600">
-          아래 내용을 복사해서 ChatGPT 에 붙여넣으세요.
+          U턴스캐너의 판단을 복사해서 ChatGPT 에게 한 번 더 점검받습니다.
         </p>
         {data.base_date && (
           <p className="mt-0.5 text-xs text-slate-500">기준일: {data.base_date}</p>
@@ -116,6 +158,9 @@ export default async function GptReportPage({ searchParams }: PageProps) {
           priceByTicker={priceByTicker}
           previousJudgementByTicker={previousJudgementByTicker}
           marketRegime={data.marketRegime}
+          marketStrength={data.marketStrength}
+          capStyle={data.capStyle}
+          sectorFlow={data.sectorFlow}
           initialMarkdown={initialMarkdown}
         />
       )}

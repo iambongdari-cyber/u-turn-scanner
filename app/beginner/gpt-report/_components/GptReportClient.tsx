@@ -11,11 +11,15 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { loadAllPlans } from '../../../_lib/trade_storage';
-import { buildGptReport, buildAll } from '../../../_lib/gpt_report';
+import { buildAll, buildCombinedReport } from '../../../_lib/gpt_report';
 import { BeginnerRow } from '../../../_lib/beginner';
 import { ActionRecommend } from '../../../_lib/trade_plan';
 import { MarketRegimeResult, buildConclusionText } from '../../../_lib/market_regime';
 import { evaluateStrategyCondition } from '../../../_lib/strategy_condition';
+import { MarketStrength, CapStyle } from '../../../_lib/market_strength';
+import { SectorFlow } from '../../../_lib/sector_flow';
+import { classifyStockCharacter } from '../../../_lib/stock_character';
+import { buildTomorrowAction } from '../../../_lib/tomorrow_action';
 
 interface Props {
   base_date: string | null;
@@ -23,12 +27,17 @@ interface Props {
   priceByTicker: Record<string, number>;
   previousJudgementByTicker?: Record<string, ActionRecommend>;
   marketRegime: MarketRegimeResult | null;
+  /** v0.8-4 판단 리포트용 추가 데이터 */
+  marketStrength?: MarketStrength | null;
+  capStyle?: CapStyle | null;
+  sectorFlow?: SectorFlow | null;
   /** 서버에서 미리 생성한 markdown (plans=[] 기준) — JS 실패 시 fallback */
   initialMarkdown: string;
 }
 
 export default function GptReportClient({
-  base_date, rows, priceByTicker, previousJudgementByTicker, marketRegime, initialMarkdown,
+  base_date, rows, priceByTicker, previousJudgementByTicker, marketRegime,
+  marketStrength, capStyle, sectorFlow, initialMarkdown,
 }: Props) {
   const [markdown, setMarkdown] = useState(initialMarkdown);
   const [enhanced, setEnhanced] = useState(false);
@@ -65,16 +74,54 @@ export default function GptReportClient({
         regimeForReport = { ...regimeForReport, conclusionText: syncedConclusion };
       }
 
-      const md = buildGptReport({
-        base_date,
-        rows,
-        plans,
-        currentPriceByTicker: priceMap,
-        previousJudgementByTicker: prevMap,
-        briefItems,
-        selectedNewTargets,
-        marketRegime: regimeForReport,
-      });
+      // v0.8-4 판단 리포트용 추가 데이터
+      const topPick = selectedNewTargets[0] ?? null;
+      const stockCharacter = regimeForReport
+        ? classifyStockCharacter({
+            row: topPick?.row ?? null,
+            regime: regimeForReport.regime,
+            conditionState: condition.state,
+            sectorFlow: sectorFlow ?? null,
+          })
+        : null;
+      const reservedItems = briefItems.filter(i => i.urgency.kind === 'RESERVED');
+      const holdingItems = briefItems.filter(i => i.urgency.kind === 'HOLDING');
+      const hasHoldingOrReserved = reservedItems.length + holdingItems.length > 0;
+      const tomorrowAction = regimeForReport
+        ? buildTomorrowAction({
+            regime: regimeForReport.regime,
+            conditionState: condition.state,
+            topPickName: topPick?.name ?? null,
+            hasHoldingOrReserved,
+            strongCandidateCount: selectedNewTargets.length,
+            stockCharacter: stockCharacter?.character ?? null,
+          })
+        : null;
+
+      const md = buildCombinedReport(
+        {
+          base_date,
+          marketRegime: regimeForReport,
+          marketStrength: marketStrength ?? null,
+          capStyle: capStyle ?? null,
+          sectorFlow: sectorFlow ?? null,
+          stockCharacter,
+          tomorrowAction,
+          strategyCondition: condition,
+          topPick,
+        },
+        {
+          base_date,
+          rows,
+          plans,
+          currentPriceByTicker: priceMap,
+          previousJudgementByTicker: prevMap,
+          briefItems,
+          selectedNewTargets,
+          marketRegime: regimeForReport,
+          strategyCondition: condition,
+        },
+      );
       if (md && md.trim().length > 0) {
         setMarkdown(md);
         setEnhanced(true);

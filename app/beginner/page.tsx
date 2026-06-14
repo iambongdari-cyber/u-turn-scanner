@@ -151,13 +151,17 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
         effectiveDate={data.effectiveDate}
       />
 
-      {/* 9. GPT 리포트 — v0.7.5 PC/모바일 분리 */}
+      {/* 9. GPT 리포트 — v0.8-4 "GPT에게 다시 물어보기" */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
-        <h2 className="text-lg font-semibold text-slate-900">💬 GPT 상담 / 확인</h2>
+        <h2 className="text-lg font-semibold text-slate-900">💬 GPT에게 다시 물어보기</h2>
         <p className="mt-1 text-xs text-slate-500">
-          {isPastView
-            ? `${data.base_date ?? requestedDate} 기준 투자판단 리포트를 생성합니다.`
-            : 'ChatGPT 에게 그대로 붙여넣어 상담받을 수 있는 행동 중심 마크다운 리포트를 생성합니다.'}
+          U턴스캐너의 판단을 복사해서 ChatGPT 에게 한 번 더 점검받습니다.
+          {isPastView && (
+            <>
+              {' '}
+              ({data.base_date ?? requestedDate} 기준 판단 리포트)
+            </>
+          )}
         </p>
 
         {/* 모바일 (md 미만) — 별도 페이지 Link (안정성 우선) */}
@@ -166,7 +170,7 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
             href={requestedDate ? `/beginner/gpt-report?date=${requestedDate}` : '/beginner/gpt-report'}
             className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
           >
-            💬 GPT 상담용 리포트 보기/복사
+            💬 GPT에게 다시 물어보기
           </Link>
           <p className="mt-1 text-[10px] text-slate-500">
             모바일 — 별도 페이지에서 열림
@@ -183,6 +187,9 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
               priceByTicker={priceByTicker}
               previousJudgementByTicker={previousJudgementByTicker}
               marketRegime={data.marketRegime}
+              marketStrength={data.marketStrength}
+              capStyle={data.capStyle}
+              sectorFlow={data.sectorFlow}
             />
           </div>
           <p className="mt-1 text-[10px] text-slate-500">
