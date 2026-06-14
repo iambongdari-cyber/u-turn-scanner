@@ -698,13 +698,44 @@ function labelCategoryKo(c: string): string {
 }
 
 // ───────────────────────────────────────────────────────────────
-// v0.8-4 통합 빌더 — 판단 리포트 + 부록(기존 상세)
+// v0.8-4.2 ChatGPT 재점검용 고정 지시문 (리포트 최상단)
+//   사용자가 리포트 전체를 ChatGPT 에 붙여넣기만 하면 바로 분석 요청이 되도록
+//   답변 형식 7 항목을 미리 지시한다.
+// ───────────────────────────────────────────────────────────────
+export const CHATGPT_RECHECK_PROMPT = `# ChatGPT에게 요청
+
+U턴스캐너 리포트 분석해줘.
+
+나는 직장인 초보 투자자이고, 장중 대응이 어렵습니다.
+
+아래 리포트를 보고 내일 행동을 확실하게 정해주세요.
+
+원하는 답변 형식:
+
+1. 내일 매수 가능 / 보류 / 관망 중 하나로 결론
+2. 볼 종목은 몇 개인지
+3. 키움 예약매수를 넣어도 되는지
+4. 시장가 매수 또는 추격매수 금지 여부
+5. 손절가가 없으면 매수 금지 여부
+6. 내가 실제로 해야 할 행동을 순서대로 지시
+7. 마지막에 한 문장으로 결론
+
+아래는 U턴스캐너 리포트입니다.`;
+
+// ───────────────────────────────────────────────────────────────
+// v0.8-4 통합 빌더 — ChatGPT 요청 + 판단 리포트 + 부록(기존 상세)
+// v0.8-4.2: 최상단에 CHATGPT_RECHECK_PROMPT 추가
 // ───────────────────────────────────────────────────────────────
 export function buildCombinedReport(
   judgment: JudgmentReportInput,
   detailed: GptReportInput,
 ): string {
   const parts: string[] = [];
+  // v0.8-4.2 최상단 고정 지시문
+  parts.push(CHATGPT_RECHECK_PROMPT);
+  parts.push('');
+  parts.push('---');
+  parts.push('');
   parts.push(buildJudgmentReport(judgment));
   parts.push('');
   parts.push('---');
