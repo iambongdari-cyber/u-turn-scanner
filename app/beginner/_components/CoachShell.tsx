@@ -20,6 +20,7 @@ import { MarketRegimeResult } from '../../_lib/market_regime';
 import { evaluateStrategyCondition } from '../../_lib/strategy_condition';
 import { MarketStrength, CapStyle } from '../../_lib/market_strength';
 import { SectorFlow } from '../../_lib/sector_flow';
+import { classifyStockCharacter, StockCharacterResult } from '../../_lib/stock_character';
 import { buildTomorrowAction, TomorrowAction } from '../../_lib/tomorrow_action';
 import TodayConclusion from './TodayConclusion';
 import MustSeeSection from './MustSeeSection';
@@ -45,6 +46,8 @@ export default function CoachShell({
   const [selectedNewTargets, setSelectedNewTargets] = useState<TodayBriefItem[]>([]);
   // v0.8-1 내일 행동 지시 — selectedNewTargets 와 함께 갱신
   const [tomorrowAction, setTomorrowAction] = useState<TomorrowAction | null>(null);
+  // v0.8-3 1순위 종목 성격 — 5등급
+  const [stockCharacter, setStockCharacter] = useState<StockCharacterResult | null>(null);
 
   useEffect(() => {
     const recompute = () => {
@@ -68,7 +71,19 @@ export default function CoachShell({
       const targets = selectTradePlanTargets(newItems, hasHoldingOrReserved, regime?.mode, condition.state);
       setSelectedNewTargets(targets);
 
-      // v0.8-1 내일 행동 지시 빌드
+      // v0.8-3 1순위 종목 성격 분류 (사용자 명세 §4)
+      const top1Row = targets[0]?.row ?? null;
+      const character = regime
+        ? classifyStockCharacter({
+            row: top1Row,
+            regime: regime.regime,
+            conditionState: condition.state,
+            sectorFlow: sectorFlow ?? null,
+          })
+        : null;
+      setStockCharacter(character);
+
+      // v0.8-1 내일 행동 지시 빌드 + v0.8-3 stockCharacter 반영
       if (regime) {
         const action = buildTomorrowAction({
           regime: regime.regime,
@@ -76,6 +91,7 @@ export default function CoachShell({
           topPickName: targets[0]?.name ?? null,
           hasHoldingOrReserved,
           strongCandidateCount: targets.length,
+          stockCharacter: character?.character ?? null,
         });
         setTomorrowAction(action);
       } else {
@@ -89,7 +105,7 @@ export default function CoachShell({
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, priceByTicker, previousJudgementByTicker, regime?.mode, regime?.regime]);
+  }, [rows, priceByTicker, previousJudgementByTicker, regime?.mode, regime?.regime, sectorFlow]);
 
   // v0.6.1: 1순위 종목명 — 양쪽에 동일 데이터로 전달되므로 절대 다르지 않음
   const topPickName = selectedNewTargets[0]?.name ?? null;
@@ -102,7 +118,7 @@ export default function CoachShell({
       {/* §1~§4 영역 (page.tsx 에서 children 으로 전달) */}
       {middleBoxes}
 
-      {/* v0.8-1 §3.5 내일 한눈에 보기 — 오늘 장 요약 / 내일 행동 / 금지 행동 + v0.8-2 업종/대장주 */}
+      {/* v0.8-1 §3.5 내일 한눈에 보기 + v0.8-2 업종/대장주 + v0.8-3 1순위 성격 */}
       {regime && marketStrength && capStyle && tomorrowAction && (
         <MarketFlowBox
           marketRegime={regime}
@@ -110,6 +126,8 @@ export default function CoachShell({
           capStyle={capStyle}
           tomorrowAction={tomorrowAction}
           sectorFlow={sectorFlow ?? null}
+          stockCharacter={stockCharacter}
+          topPickName={selectedNewTargets[0]?.name ?? null}
         />
       )}
 

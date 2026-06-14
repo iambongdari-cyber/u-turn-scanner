@@ -19,6 +19,14 @@ type ConditionStateLite =
   | 'CAUTION'
   | 'DANGER';
 
+// v0.8-3 종목 성격 (외부 import 회피)
+type StockCharacterLite =
+  | 'LEADING_FOLLOW'
+  | 'LATE_ENTRY'
+  | 'INDIVIDUAL_UTURN'
+  | 'LATE_CHASE_RISK'
+  | 'WATCH_ONLY';
+
 // ───────────────────────────────────────────────────────────────
 // 결과 인터페이스 (사용자 명세 그대로)
 // ───────────────────────────────────────────────────────────────
@@ -43,6 +51,8 @@ export interface BuildTomorrowActionInput {
   hasHoldingOrReserved: boolean;
   /** 강세장에서 강한 후보 다수 발견 여부 — selectTradePlanTargets 결과 길이 */
   strongCandidateCount?: number;
+  /** v0.8-3 1순위 종목 성격 — 종목 자체 위험 반영 */
+  stockCharacter?: StockCharacterLite | null;
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -58,8 +68,32 @@ const BASE_MUST_NOT_DO = [
 // buildTomorrowAction — main
 // ───────────────────────────────────────────────────────────────
 export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAction {
-  const { regime, conditionState, topPickName, hasHoldingOrReserved, strongCandidateCount } = input;
+  const { regime, conditionState, topPickName, hasHoldingOrReserved, strongCandidateCount, stockCharacter } = input;
   const hasTopPick = topPickName != null;
+
+  // ── 0-a) v0.8-3 종목 성격 LATE_CHASE_RISK → 신규 진입 금지
+  if (stockCharacter === 'LATE_CHASE_RISK') {
+    return {
+      canEnterNew: false,
+      maxNewCount: 0,
+      topPickName: null,
+      intensity: 'NONE',
+      summaryLines: [
+        '내일은 신규 진입하지 마세요.',
+        '1순위 종목이 끝물 추격 위험 구간입니다.',
+        '보유종목 점검 및 손절가 재확인 우선.',
+      ],
+      mustNotDo: [
+        ...BASE_MUST_NOT_DO,
+        '끝물 추격매수 금지',
+      ],
+    };
+  }
+
+  // ── 0-b) v0.8-3 종목 성격 WATCH_ONLY → 시장 분기로 가되 1순위 미반영
+  //   시장 / 컨디션 분기는 그대로 작동 (topPickName 은 null 처리해서 "1순위 종목 없는" 분기로)
+  const effectiveTopPickName = stockCharacter === 'WATCH_ONLY' ? null : topPickName;
+  const effectiveHasTopPick = effectiveTopPickName != null;
 
   // ── 1) 위험구간 (DANGER 시장)
   if (regime === 'DANGER') {
@@ -102,14 +136,14 @@ export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAc
   // ── 3) 판단 보류 (UNKNOWN)
   if (regime === 'UNKNOWN') {
     return {
-      canEnterNew: hasTopPick,
-      maxNewCount: hasTopPick ? 1 : 0,
-      topPickName,
+      canEnterNew: effectiveHasTopPick,
+      maxNewCount: effectiveHasTopPick ? 1 : 0,
+      topPickName: effectiveTopPickName,
       intensity: 'LIGHT',
-      summaryLines: hasTopPick
+      summaryLines: effectiveHasTopPick
         ? [
             '시장 흐름 데이터가 부족해 보수적으로 판단합니다.',
-            `${topPickName} 1 개만 보세요.`,
+            `${effectiveTopPickName} 1 개만 보세요.`,
             '비중은 작게, 손절가 명확하게.',
           ]
         : [
@@ -122,7 +156,7 @@ export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAc
 
   // ── 4) 약세장 (BEAR)
   if (regime === 'BEAR') {
-    if (!hasTopPick) {
+    if (!effectiveHasTopPick) {
       return {
         canEnterNew: false,
         maxNewCount: 0,
@@ -139,10 +173,10 @@ export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAc
     return {
       canEnterNew: true,
       maxNewCount: 1,
-      topPickName,
+      topPickName: effectiveTopPickName,
       intensity: 'LIGHT',
       summaryLines: [
-        `${topPickName} 최대 1 개만 작게 검토하세요.`,
+        `${effectiveTopPickName} 최대 1 개만 작게 검토하세요.`,
         '약세장이므로 손절가가 가까운 종목만.',
         '신규 진입보다 보유종목 점검이 우선입니다.',
       ],
@@ -152,7 +186,7 @@ export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAc
 
   // ── 5) 보합장 (NEUTRAL)
   if (regime === 'NEUTRAL') {
-    if (!hasTopPick) {
+    if (!effectiveHasTopPick) {
       return {
         canEnterNew: false,
         maxNewCount: 0,
@@ -169,10 +203,10 @@ export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAc
     return {
       canEnterNew: true,
       maxNewCount: 1,
-      topPickName,
+      topPickName: effectiveTopPickName,
       intensity: 'LIGHT',
       summaryLines: [
-        `${topPickName} 1 개만 보세요.`,
+        `${effectiveTopPickName} 1 개만 보세요.`,
         '보합장이므로 비중은 작게.',
         '예약매수는 1 건만, 손절가 명확하게.',
       ],
@@ -182,7 +216,8 @@ export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAc
 
   // ── 6) 강세장 (BULL)
   if (regime === 'BULL') {
-    if (!hasTopPick) {
+    // v0.8-3: WATCH_ONLY 차단 후 effectiveTopPickName 가 null 인 경우 처리
+    if (!effectiveHasTopPick) {
       return {
         canEnterNew: false,
         maxNewCount: 0,
@@ -202,10 +237,10 @@ export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAc
       return {
         canEnterNew: true,
         maxNewCount: 1,
-        topPickName,
+        topPickName: effectiveTopPickName,
         intensity: 'NORMAL',
         summaryLines: [
-          `${topPickName} 1 개만 신규로 보세요.`,
+          `${effectiveTopPickName} 1 개만 신규로 보세요.`,
           '강세장이지만 보유/예약이 있어 신규는 1 개로 제한.',
           '눌림/재돌파 가격 명확한 종목만, 손절가 -5% 이내.',
         ],
@@ -213,23 +248,40 @@ export function buildTomorrowAction(input: BuildTomorrowActionInput): TomorrowAc
       };
     }
 
-    // 강한 후보가 여럿 있으면 최대 3개
+    // v0.8-3 종목 성격 — LATE_ENTRY / INDIVIDUAL_UTURN 이면 강세장에서도 최대 1, LIGHT
+    if (stockCharacter === 'LATE_ENTRY' || stockCharacter === 'INDIVIDUAL_UTURN') {
+      const charLabel = stockCharacter === 'LATE_ENTRY' ? '후발주' : '개별 U턴 종목';
+      return {
+        canEnterNew: true,
+        maxNewCount: 1,
+        topPickName: effectiveTopPickName,
+        intensity: 'LIGHT',
+        summaryLines: [
+          `${effectiveTopPickName} 1 개만 작게 검토하세요.`,
+          `강세장이지만 1순위가 ${charLabel}이라 신규는 1 개로 제한.`,
+          '손절가 -5% 이내 명확하게.',
+        ],
+        mustNotDo: [...BASE_MUST_NOT_DO, '추격매수 금지 (이격 12% 이상 보류)'],
+      };
+    }
+
+    // 강한 후보가 여럿 있으면 최대 3개 — LEADING_FOLLOW 인 경우만 캡 확대
     const cap = strongCandidateCount && strongCandidateCount >= 2
       ? Math.min(strongCandidateCount, 3)
       : 1;
     return {
       canEnterNew: true,
       maxNewCount: cap,
-      topPickName,
+      topPickName: effectiveTopPickName,
       intensity: 'NORMAL',
       summaryLines: cap >= 2
         ? [
-            `${topPickName} 등 최대 ${cap} 종목 검토 가능.`,
+            `${effectiveTopPickName} 등 최대 ${cap} 종목 검토 가능.`,
             '강세장이므로 주도주 / 후발 강세 후보 우선.',
             '눌림/재돌파 가격 명확한 종목만, 손절가 -5% 이내.',
           ]
         : [
-            `${topPickName} 1 개를 우선 검토.`,
+            `${effectiveTopPickName} 1 개를 우선 검토.`,
             '강세장 흐름이지만 추격은 금지.',
             '눌림/재돌파 가격 명확하게, 손절가 -5% 이내.',
           ],

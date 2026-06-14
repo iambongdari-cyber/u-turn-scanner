@@ -10,6 +10,7 @@ import { MarketRegimeResult, REGIME_BADGE_CLASS } from '../../_lib/market_regime
 import { MarketStrength, CapStyle } from '../../_lib/market_strength';
 import { TomorrowAction } from '../../_lib/tomorrow_action';
 import { SectorFlow } from '../../_lib/sector_flow';
+import { StockCharacterResult, CHARACTER_BADGE_CLASS } from '../../_lib/stock_character';
 import { AI_DISCLAIMER } from '../../_lib/trade_plan';
 
 interface Props {
@@ -19,10 +20,14 @@ interface Props {
   tomorrowAction: TomorrowAction;
   /** v0.8-2 업종 흐름 + 주도 업종 + 대장주 */
   sectorFlow?: SectorFlow | null;
+  /** v0.8-3 1순위 종목 5등급 성격 */
+  stockCharacter?: StockCharacterResult | null;
+  /** v0.8-3 1순위 종목명 (표시용) */
+  topPickName?: string | null;
 }
 
 export default function MarketFlowBox({
-  marketRegime, marketStrength, capStyle, tomorrowAction, sectorFlow,
+  marketRegime, marketStrength, capStyle, tomorrowAction, sectorFlow, stockCharacter, topPickName,
 }: Props) {
   // 오늘 장 요약 3 줄
   const todayLines = [
@@ -183,6 +188,44 @@ export default function MarketFlowBox({
               <div className="mt-0.5 text-slate-500">
                 오늘 업종별 대장주를 특정하기 어렵습니다.
               </div>
+            </div>
+          )}
+
+          {/* v0.8-3 1순위 종목 성격 (5등급) */}
+          {stockCharacter && (
+            <div className="border-t border-slate-200 pt-2">
+              <div className="font-semibold text-slate-800">🎯 1순위 종목 성격</div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                {topPickName && (
+                  <span className="text-slate-800">{topPickName} —</span>
+                )}
+                <span
+                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${CHARACTER_BADGE_CLASS[stockCharacter.character]}`}
+                >
+                  {stockCharacter.label}
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  위험 {stockCharacter.riskLevel === 'LOW' ? '낮음' : stockCharacter.riskLevel === 'MEDIUM' ? '보통' : '높음'}
+                </span>
+              </div>
+              <div className="mt-1 text-[11px] text-slate-700">{stockCharacter.narrative}</div>
+              {stockCharacter.reasoning.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {stockCharacter.reasoning.map((r, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex rounded-full bg-white/60 px-1.5 py-0.5 text-[10px] text-slate-600 ring-1 ring-slate-200"
+                    >
+                      {r}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {!stockCharacter.isActionable && (
+                <div className="mt-1 text-[10px] text-red-700">
+                  ※ 이 성격은 내일 신규 진입 대상에서 제외됩니다.
+                </div>
+              )}
             </div>
           )}
         </div>
