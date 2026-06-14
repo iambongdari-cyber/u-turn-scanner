@@ -18,10 +18,13 @@ import CoachShell from './_components/CoachShell';
 import MyPlansSection from './_components/MyPlansSection';
 import CollapsibleCandidates from './_components/CollapsibleCandidates';
 import MissedReportsBox from './_components/MissedReportsBox';
+// v0.7.5: PC/모바일 UX 분리 — 모바일은 Link 로 /beginner/gpt-report 이동,
+// PC 는 GptReportButton 으로 같은 화면에서 인라인 펼침
 import GptReportButton from './_components/GptReportButton';
 import MarketRegimeBox from './_components/MarketRegimeBox';
 import StrategyConditionBox from './_components/StrategyConditionBox';
-import { RecommendedActionsBox, ForbiddenActionsBox } from './_components/ActionGuideBoxes';
+// v0.7.6: RecommendedActionsBox / ForbiddenActionsBox 화면 노출 제거 (오늘의 결론과 중복).
+// 데이터는 보존 — GPT 리포트 §3 §4 그대로 + MarketRegimeBox 자세히 보기에 보조 표시.
 
 export const dynamic = 'force-dynamic';
 
@@ -123,8 +126,6 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
           <>
             <MarketRegimeBox regime={data.marketRegime} />
             <StrategyConditionBox />
-            <RecommendedActionsBox regime={data.marketRegime} />
-            <ForbiddenActionsBox regime={data.marketRegime} />
           </>
         }
       />
@@ -147,7 +148,7 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
         effectiveDate={data.effectiveDate}
       />
 
-      {/* 9. GPT 리포트 — 선택 날짜 기준 */}
+      {/* 9. GPT 리포트 — v0.7.5 PC/모바일 분리 */}
       <section className="rounded-lg border border-slate-200 bg-white p-4">
         <h2 className="text-lg font-semibold text-slate-900">💬 GPT 상담 / 확인</h2>
         <p className="mt-1 text-xs text-slate-500">
@@ -155,14 +156,35 @@ export default async function BeginnerPage({ searchParams }: PageProps) {
             ? `${data.base_date ?? requestedDate} 기준 투자판단 리포트를 생성합니다.`
             : 'ChatGPT 에게 그대로 붙여넣어 상담받을 수 있는 행동 중심 마크다운 리포트를 생성합니다.'}
         </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <GptReportButton
-            base_date={data.base_date}
-            rows={data.rows}
-            priceByTicker={priceByTicker}
-            previousJudgementByTicker={previousJudgementByTicker}
-            marketRegime={data.marketRegime}
-          />
+
+        {/* 모바일 (md 미만) — 별도 페이지 Link (안정성 우선) */}
+        <div className="mt-3 md:hidden">
+          <Link
+            href={requestedDate ? `/beginner/gpt-report?date=${requestedDate}` : '/beginner/gpt-report'}
+            className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+          >
+            💬 GPT 상담용 리포트 보기/복사
+          </Link>
+          <p className="mt-1 text-[10px] text-slate-500">
+            모바일 — 별도 페이지에서 열림
+          </p>
+        </div>
+
+        {/* PC (md 이상) — 같은 화면에서 인라인 펼침 (편의성 우선) */}
+        {/* v0.7.6.2: PC wrapper + flex 컨테이너에 min-w-0 / overflow-hidden 추가 — 인라인 펼침 시 가로 확장 방지 */}
+        <div className="mt-3 hidden min-w-0 max-w-full overflow-hidden md:block">
+          <div className="flex min-w-0 max-w-full flex-wrap gap-2">
+            <GptReportButton
+              base_date={data.base_date}
+              rows={data.rows}
+              priceByTicker={priceByTicker}
+              previousJudgementByTicker={previousJudgementByTicker}
+              marketRegime={data.marketRegime}
+            />
+          </div>
+          <p className="mt-1 text-[10px] text-slate-500">
+            PC — 버튼 클릭 시 이 카드 안에서 펼침
+          </p>
         </div>
       </section>
 

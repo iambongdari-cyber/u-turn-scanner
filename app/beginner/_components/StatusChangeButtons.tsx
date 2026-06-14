@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import { TradePlan, TradeStatus } from '../../_lib/trade_plan';
 import { changeStatus } from '../../_lib/trade_storage';
+import CloseTradeModal from './CloseTradeModal';
 
 interface Props {
   plan: TradePlan;
@@ -14,6 +15,7 @@ interface Props {
 
 export default function StatusChangeButtons({ plan, variant, onChanged }: Props) {
   const [showInput, setShowInput] = useState<null | 'first' | 'second' | 'cancel'>(null);
+  const [showCloseModal, setShowCloseModal] = useState(false); // v0.7 매도완료 모달
   const [actualPrice, setActualPrice] = useState('');
   const [cancelReason, setCancelReason] = useState('');
 
@@ -176,12 +178,19 @@ export default function StatusChangeButtons({ plan, variant, onChanged }: Props)
         </button>
         <button
           type="button"
-          onClick={() => fire('CLOSED')}
+          onClick={() => setShowCloseModal(true)}
           className="rounded-md border border-slate-400 bg-slate-100 px-2 py-1 text-xs text-slate-800 hover:bg-slate-200"
         >
           매도완료
         </button>
       </div>
+      {showCloseModal && (
+        <CloseTradeModal
+          plan={plan}
+          onClose={() => setShowCloseModal(false)}
+          onSaved={(p) => { setShowCloseModal(false); onChanged(p); }}
+        />
+      )}
       {showInput === 'second' && (
         <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2">
           <div className="text-xs text-slate-700">실제 2차 체결가 입력:</div>

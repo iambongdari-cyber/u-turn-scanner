@@ -58,42 +58,12 @@ export default function MarketRegimeBox({ regime }: Props) {
         {regime.advice}
       </p>
 
-      {/* 추천 행동 / 금지 행동 — 2열 */}
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-md border border-emerald-200 bg-white/70 p-3">
-          <div className="text-sm font-semibold text-emerald-800">✅ 추천 행동</div>
-          <ul className="mt-1.5 space-y-1">
-            {regime.recommendedActions.map((a, i) => (
-              <li key={i} className="flex gap-1.5 text-sm text-slate-800">
-                <span className="text-emerald-600">·</span>
-                <span>{a}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="rounded-md border border-red-200 bg-white/70 p-3">
-          <div className="text-sm font-semibold text-red-800">🚫 금지 행동</div>
-          <ul className="mt-1.5 space-y-1">
-            {regime.forbiddenActions.map((a, i) => (
-              <li key={i} className="flex gap-1.5 text-sm text-slate-800">
-                <span className="text-red-500">·</span>
-                <span>{a}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      {/* v0.7.6.1: 추천/금지 행동 박스 기본 영역에서 제거 — "자세히 보기" 안에만 표시.
+                    메트릭 한 줄도 자세히 보기 안 시그널 풀에서 확인 가능하므로 기본에서 제거. */}
 
-      {/* 메트릭 한 줄 */}
-      {regime.metrics.length > 0 && (
-        <p className="mt-3 text-xs text-slate-600">
-          {regime.metrics.join(' · ')}
-        </p>
-      )}
-
-      {/* 사유 칩 */}
+      {/* 판단 사유 요약 (칩) — 기본 노출 유지 */}
       {regime.reasons.length > 0 && (
-        <div className="mt-2 flex flex-wrap items-center gap-1">
+        <div className="mt-3 flex flex-wrap items-center gap-1">
           <span className="text-xs text-slate-500">판단 사유:</span>
           {regime.reasons.map((r, i) => (
             <span
@@ -124,6 +94,12 @@ export default function MarketRegimeBox({ regime }: Props) {
         </button>
         {open && (
           <div className="mt-2 rounded-md border border-slate-200 bg-white/70 p-2">
+            {/* v0.7.6.1: 메트릭 한 줄 — 기본에서 자세히 보기로 이동 */}
+            {regime.metrics.length > 0 && (
+              <p className="mb-2 text-[11px] text-slate-600">
+                {regime.metrics.join(' · ')}
+              </p>
+            )}
             <div className="text-xs font-semibold text-slate-700">
               시장 상태 시그널 ({regime.signals.length}개) · raw 총점 {regime.score >= 0 ? '+' : ''}{regime.score}
               {regime.displayScore != null && ` · 표시 점수 ${regime.displayScore}/100`}
@@ -149,6 +125,32 @@ export default function MarketRegimeBox({ regime }: Props) {
                 <li>· 0~39 <span className="font-medium text-red-700">위험구간</span> (관망)</li>
               </ul>
             </div>
+
+            {/* v0.7.6.1: 추천/금지 행동 — 자세히 보기 안 유일 노출 위치 */}
+            {(regime.recommendedActions.length > 0 || regime.forbiddenActions.length > 0) && (
+              <div className="mt-3 grid gap-2 border-t border-slate-200 pt-2 sm:grid-cols-2">
+                {regime.recommendedActions.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-emerald-800">✅ 추천 행동</div>
+                    <ul className="mt-1 space-y-0.5 text-[11px] text-slate-700">
+                      {regime.recommendedActions.map((a, i) => (
+                        <li key={i}>· {a}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {regime.forbiddenActions.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold text-red-800">🚫 금지 행동</div>
+                    <ul className="mt-1 space-y-0.5 text-[11px] text-slate-700">
+                      {regime.forbiddenActions.map((a, i) => (
+                        <li key={i}>· {a}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
 
             <p className="mt-2 text-[10px] text-slate-500">
               ※ 이 판단은 자동 분석 결과이며 실제 투자 판단은 사용자가 최종 결정합니다.

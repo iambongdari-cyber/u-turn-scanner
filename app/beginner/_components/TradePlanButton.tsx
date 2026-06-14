@@ -153,6 +153,11 @@ function TradePlanModal({ row, onClose, onSaved }: ModalProps) {
       closed_at: null,
       cancelled_at: null,
       cancellation_reason: null,
+      // v0.7 매도완료 결과 (기본 null)
+      closed_at_price: null,
+      closed_pnl_pct: null,
+      closed_at_date: null,
+      close_memo: null,
       scoring_snapshot: {
         name: row.name,
         ticker: row.ticker,

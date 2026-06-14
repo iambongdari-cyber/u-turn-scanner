@@ -328,13 +328,26 @@ export interface TodayBriefItem {
 /** v0.6 전략 모드 — 외부 import 회피를 위해 string union 으로 받음 (관망 HOLD_CASH 추가) */
 export type SelectRegimeMode = 'AGGRESSIVE' | 'SELECTIVE' | 'DEFENSIVE' | 'HOLD_CASH';
 
+/** v0.7 전략 컨디션 상태 — 외부 import 회피용 string union */
+export type SelectConditionState =
+  | 'DATA_INSUFFICIENT'
+  | 'EXCELLENT'
+  | 'GOOD'
+  | 'AVERAGE'
+  | 'CAUTION'
+  | 'DANGER';
+
 export function selectTradePlanTargets(
   newItems: TodayBriefItem[],
   hasHoldingOrReserved: boolean,
   regimeMode?: SelectRegimeMode,
+  conditionState?: SelectConditionState,
 ): TodayBriefItem[] {
   // v0.6: 관망(HOLD_CASH = 위험구간) — 신규 진입 금지, 무조건 0개 반환
   if (regimeMode === 'HOLD_CASH') return [];
+
+  // v0.7: 전략 컨디션 DANGER — 시장 모드 무관 신규 0개
+  if (conditionState === 'DANGER') return [];
 
   // TODAY 또는 URGENT 등급의 신규 후보만 후보
   const pool = newItems.filter(i =>
@@ -374,12 +387,19 @@ export function selectTradePlanTargets(
       score -= 20;
     }
 
+    // v0.7 컨디션별 추가 분기
+    if (conditionState === 'CAUTION') score -= 15;       // 컨디션 주의 — 신규 강도 하향
+
     return { item: it, score, uturn: v.uturn_passed, risk: v.risk };
   })
   .filter(s => s.score >= 0) // 모드 분기로 score 가 0 미만이면 사실상 제외
   .sort((a, b) => b.score - a.score);
 
   if (scored.length === 0) return [];
+
+  // v0.7 컨디션 × 모드 매트릭스 캡
+  // - 방어 (BEAR) + CAUTION → 0개 (관망에 가깝게)
+  if (mode === 'DEFENSIVE' && conditionState === 'CAUTION') return [];
 
   // v0.5 모드별 캡
   // - DEFENSIVE: 최대 1개
@@ -391,11 +411,17 @@ export function selectTradePlanTargets(
 
   // AGGRESSIVE
   if (hasHoldingOrReserved) {
+    // v0.7: EXCELLENT 컨디션이면 보유/예약 있어도 2개까지 허용
+    if (conditionState === 'EXCELLENT' && scored.length >= 2) {
+      return scored.slice(0, 2).map(s => s.item);
+    }
     return [scored[0].item];
   }
   const veryStrong = scored.filter(s => s.uturn >= 5 && s.risk === 'LOW');
+  // v0.7 AVERAGE 컨디션이면 강세장도 최대 2 캡 (3 → 2)
+  const maxCap = conditionState === 'AVERAGE' ? 2 : 3;
   if (veryStrong.length >= 2) {
-    return veryStrong.slice(0, 3).map(s => s.item);
+    return veryStrong.slice(0, maxCap).map(s => s.item);
   }
   return [scored[0].item];
 }

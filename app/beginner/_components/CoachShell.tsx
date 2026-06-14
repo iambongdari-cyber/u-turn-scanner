@@ -17,6 +17,7 @@ import {
 } from '../../_lib/today_brief';
 import { buildAllBriefItems } from '../../_lib/gpt_report';
 import { MarketRegimeResult } from '../../_lib/market_regime';
+import { evaluateStrategyCondition } from '../../_lib/strategy_condition';
 import TodayConclusion from './TodayConclusion';
 import MustSeeSection from './MustSeeSection';
 
@@ -51,7 +52,9 @@ export default function CoachShell({
       const reservedItems = briefItems.filter(i => i.urgency.kind === 'RESERVED');
       const holdingItems = briefItems.filter(i => i.urgency.kind === 'HOLDING');
       const hasHoldingOrReserved = reservedItems.length + holdingItems.length > 0;
-      const targets = selectTradePlanTargets(newItems, hasHoldingOrReserved, regime?.mode);
+      // v0.7 전략 컨디션 평가 → 종목 선정에 반영
+      const condition = evaluateStrategyCondition(plans);
+      const targets = selectTradePlanTargets(newItems, hasHoldingOrReserved, regime?.mode, condition.state);
       setSelectedNewTargets(targets);
     };
     recompute();

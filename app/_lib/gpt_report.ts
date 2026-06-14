@@ -279,6 +279,8 @@ export interface BuildAllInput {
   priceMap: Map<string, number>;
   previousJudgementMap?: Map<string, ActionRecommend>;
   regimeMode?: 'AGGRESSIVE' | 'SELECTIVE' | 'DEFENSIVE' | 'HOLD_CASH';
+  /** v0.7 전략 컨디션 상태 — 종목 선정 매트릭스에 반영 */
+  conditionState?: 'DATA_INSUFFICIENT' | 'EXCELLENT' | 'GOOD' | 'AVERAGE' | 'CAUTION' | 'DANGER';
 }
 
 export interface BuildAllResult {
@@ -292,7 +294,12 @@ export function buildAll(input: BuildAllInput): BuildAllResult {
   const reservedItems = briefItems.filter(i => i.urgency.kind === 'RESERVED');
   const holdingItems = briefItems.filter(i => i.urgency.kind === 'HOLDING');
   const hasHoldingOrReserved = reservedItems.length + holdingItems.length > 0;
-  const selectedNewTargets = selectTradePlanTargets(newItems, hasHoldingOrReserved, input.regimeMode);
+  const selectedNewTargets = selectTradePlanTargets(
+    newItems,
+    hasHoldingOrReserved,
+    input.regimeMode,
+    input.conditionState,
+  );
   return { briefItems, selectedNewTargets };
 }
 

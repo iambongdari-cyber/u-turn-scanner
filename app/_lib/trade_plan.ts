@@ -247,6 +247,12 @@ export interface TradePlan {
   cancelled_at: string | null;
   cancellation_reason: string | null;
 
+  // v0.7 매도완료 결과 (옵셔널 — 기존 plans 호환)
+  closed_at_price: number | null;        // 실제 종료가
+  closed_pnl_pct: number | null;         // 수익률 % (자동 계산 또는 사용자 수정)
+  closed_at_date: string | null;         // 종료일 YYYY-MM-DD
+  close_memo: string | null;             // 메모
+
   // 채점 스냅샷
   scoring_snapshot: ScoringSnapshot;
 

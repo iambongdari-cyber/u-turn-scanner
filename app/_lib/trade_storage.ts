@@ -121,6 +121,11 @@ export function changeStatus(
     actual_first_filled_price?: number;
     actual_second_filled_price?: number;
     cancellation_reason?: string;
+    // v0.7 매도완료 결과
+    closed_at_price?: number;
+    closed_pnl_pct?: number;
+    closed_at_date?: string;
+    close_memo?: string;
   },
 ): TradePlan | null {
   const plans = loadAllPlans();
@@ -146,6 +151,11 @@ export function changeStatus(
   }
   if (status === 'CLOSED') {
     patch.closed_at = ts;
+    // v0.7 매도완료 결과 필드 채움
+    if (extras?.closed_at_price != null) patch.closed_at_price = extras.closed_at_price;
+    if (extras?.closed_pnl_pct != null) patch.closed_pnl_pct = extras.closed_pnl_pct;
+    if (extras?.closed_at_date) patch.closed_at_date = extras.closed_at_date;
+    if (extras?.close_memo) patch.close_memo = extras.close_memo;
   }
   if (status === 'CANCELLED') {
     patch.cancelled_at = ts;
