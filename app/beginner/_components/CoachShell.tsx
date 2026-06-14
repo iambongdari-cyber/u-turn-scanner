@@ -19,6 +19,7 @@ import { buildAllBriefItems } from '../../_lib/gpt_report';
 import { MarketRegimeResult } from '../../_lib/market_regime';
 import { evaluateStrategyCondition } from '../../_lib/strategy_condition';
 import { MarketStrength, CapStyle } from '../../_lib/market_strength';
+import { SectorFlow } from '../../_lib/sector_flow';
 import { buildTomorrowAction, TomorrowAction } from '../../_lib/tomorrow_action';
 import TodayConclusion from './TodayConclusion';
 import MustSeeSection from './MustSeeSection';
@@ -34,10 +35,12 @@ interface Props {
   /** v0.8-1 KOSPI/KOSDAQ 강도 + 대형주/중소형주 */
   marketStrength?: MarketStrength | null;
   capStyle?: CapStyle | null;
+  /** v0.8-2 업종 흐름 + 주도 업종 + 대장주 */
+  sectorFlow?: SectorFlow | null;
 }
 
 export default function CoachShell({
-  regime, rows, priceByTicker, previousJudgementByTicker, middleBoxes, marketStrength, capStyle,
+  regime, rows, priceByTicker, previousJudgementByTicker, middleBoxes, marketStrength, capStyle, sectorFlow,
 }: Props) {
   const [selectedNewTargets, setSelectedNewTargets] = useState<TodayBriefItem[]>([]);
   // v0.8-1 내일 행동 지시 — selectedNewTargets 와 함께 갱신
@@ -99,13 +102,14 @@ export default function CoachShell({
       {/* §1~§4 영역 (page.tsx 에서 children 으로 전달) */}
       {middleBoxes}
 
-      {/* v0.8-1 §3.5 내일 한눈에 보기 — 오늘 장 요약 / 내일 행동 / 금지 행동 */}
+      {/* v0.8-1 §3.5 내일 한눈에 보기 — 오늘 장 요약 / 내일 행동 / 금지 행동 + v0.8-2 업종/대장주 */}
       {regime && marketStrength && capStyle && tomorrowAction && (
         <MarketFlowBox
           marketRegime={regime}
           marketStrength={marketStrength}
           capStyle={capStyle}
           tomorrowAction={tomorrowAction}
+          sectorFlow={sectorFlow ?? null}
         />
       )}
 

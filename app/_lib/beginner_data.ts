@@ -22,6 +22,7 @@ import {
   MarketStrength,
   CapStyle,
 } from './market_strength';
+import { judgeSectorFlow, SectorFlow, SectorGroupRaw as SectorFlowGroupRaw } from './sector_flow';
 
 interface CandidateBottomRaw {
   ticker: string;
@@ -152,6 +153,8 @@ export interface BeginnerDataBundle {
   marketStrength: MarketStrength;
   /** v0.8-1 대형주/중소형주 흐름 */
   capStyle: CapStyle;
+  /** v0.8-2 업종 흐름 + 주도 업종 + 대장주 */
+  sectorFlow: SectorFlow;
 }
 
 export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundle> {
@@ -247,6 +250,11 @@ export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundl
   const marketStrength = judgeMarketStrength(scan?.market ?? null);
   const capStyle = judgeCapStyle(marketStrength);
 
+  // v0.8-2 업종 흐름 + 주도 업종 + 대장주
+  const sectorFlow = judgeSectorFlow(
+    (sector?.sectors_strong as SectorFlowGroupRaw[] | undefined) ?? null
+  );
+
   return {
     base_date: scan?.base_date ?? date ?? null,
     rows,
@@ -259,6 +267,7 @@ export async function loadBeginnerData(date?: string): Promise<BeginnerDataBundl
     marketRegime,
     marketStrength,
     capStyle,
+    sectorFlow,
   };
 }
 

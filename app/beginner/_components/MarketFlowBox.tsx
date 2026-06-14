@@ -9,6 +9,7 @@
 import { MarketRegimeResult, REGIME_BADGE_CLASS } from '../../_lib/market_regime';
 import { MarketStrength, CapStyle } from '../../_lib/market_strength';
 import { TomorrowAction } from '../../_lib/tomorrow_action';
+import { SectorFlow } from '../../_lib/sector_flow';
 import { AI_DISCLAIMER } from '../../_lib/trade_plan';
 
 interface Props {
@@ -16,10 +17,12 @@ interface Props {
   marketStrength: MarketStrength;
   capStyle: CapStyle;
   tomorrowAction: TomorrowAction;
+  /** v0.8-2 업종 흐름 + 주도 업종 + 대장주 */
+  sectorFlow?: SectorFlow | null;
 }
 
 export default function MarketFlowBox({
-  marketRegime, marketStrength, capStyle, tomorrowAction,
+  marketRegime, marketStrength, capStyle, tomorrowAction, sectorFlow,
 }: Props) {
   // 오늘 장 요약 3 줄
   const todayLines = [
@@ -117,6 +120,69 @@ export default function MarketFlowBox({
             <div>
               <div className="font-semibold text-slate-800">1순위 종목</div>
               <div className="mt-0.5">{tomorrowAction.topPickName}</div>
+            </div>
+          )}
+
+          {/* v0.8-2 돈이 들어온 곳 (업종 TOP 3 + 주도 업종) */}
+          {sectorFlow && (
+            <div className="border-t border-slate-200 pt-2">
+              <div className="font-semibold text-slate-800">💰 돈이 들어온 곳</div>
+              {sectorFlow.topThree.length === 0 ? (
+                <div className="mt-0.5 text-slate-500">{sectorFlow.narrative}</div>
+              ) : (
+                <>
+                  <div className="mt-0.5 whitespace-pre-line">{sectorFlow.narrative}</div>
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-slate-600">
+                    {sectorFlow.topThree.map((s) => (
+                      <li key={s.sector} className="flex items-baseline justify-between">
+                        <span>
+                          {s.sectorLabel}
+                          {s.isLeading && <span className="ml-1 text-amber-700">★ 주도</span>}
+                        </span>
+                        <span className="tabular-nums text-slate-500">
+                          점수 {s.score}
+                          {s.return20d != null && ` · 20일 ${s.return20d >= 0 ? '+' : ''}${s.return20d.toFixed(1)}%`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {sectorFlow.insufficient && (
+                    <div className="mt-1 text-[10px] text-slate-500">
+                      ※ 업종 데이터가 충분하지 않거나 매핑이 미등록되어 보수적으로 표시합니다.
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* v0.8-2 대장주 판단 */}
+          {sectorFlow && Object.keys(sectorFlow.leadersBySector).length > 0 && (
+            <div className="border-t border-slate-200 pt-2">
+              <div className="font-semibold text-slate-800">🏆 대장주 판단</div>
+              <ul className="mt-1 space-y-0.5">
+                {Object.entries(sectorFlow.leadersBySector).map(([sector, arr]) => (
+                  <li key={sector} className="text-[11px] text-slate-700">
+                    <strong>{arr[0]?.sectorLabel ?? sector}:</strong>{' '}
+                    {arr.map(a => a.name).join(', ')}
+                    {arr.some(a => a.source === 'QUASI_LEADER') && (
+                      <span className="ml-1 text-slate-500">(준대장주 후보 포함)</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-1 whitespace-pre-line text-[11px] text-slate-600">
+                {sectorFlow.leaderNarrative.split('\n').slice(-1).join('\n')}
+              </div>
+            </div>
+          )}
+
+          {sectorFlow && Object.keys(sectorFlow.leadersBySector).length === 0 && (
+            <div className="border-t border-slate-200 pt-2">
+              <div className="font-semibold text-slate-800">🏆 대장주 판단</div>
+              <div className="mt-0.5 text-slate-500">
+                오늘 업종별 대장주를 특정하기 어렵습니다.
+              </div>
             </div>
           )}
         </div>
